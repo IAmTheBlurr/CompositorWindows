@@ -16,10 +16,12 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProxyStyle>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QStyleFactory>
 #include <QStyleOption>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QWindow>
 #include <QSettings>
@@ -59,8 +61,19 @@ public:
             return editorIcon(EditorIcon::Close);
         case SP_TitleBarMinButton: return editorIcon(EditorIcon::Minus);
         case SP_TitleBarMaxButton: case SP_TitleBarNormalButton: return editorIcon(EditorIcon::Maximize);
-        case SP_DirIcon: case SP_DirOpenIcon: case SP_DirClosedIcon: case SP_DirHomeIcon: case SP_DriveHDIcon:
+        case SP_DirIcon: case SP_DirOpenIcon: case SP_DirClosedIcon:
             return editorIcon(EditorIcon::Folder);
+        case SP_DirHomeIcon: return editorIcon(EditorIcon::Home);
+        case SP_ComputerIcon: case SP_DesktopIcon: return editorIcon(EditorIcon::Computer);
+        case SP_DriveHDIcon: case SP_DriveFDIcon: case SP_DriveCDIcon: case SP_DriveDVDIcon: case SP_DriveNetIcon:
+            return editorIcon(EditorIcon::Drive);
+        case SP_FileDialogBack: return editorIcon(EditorIcon::ChevronLeft);
+        case SP_FileDialogToParent: return editorIcon(EditorIcon::ChevronUp);
+        case SP_FileDialogNewFolder: return editorIcon(EditorIcon::Group);
+        case SP_FileDialogListView: return editorIcon(EditorIcon::ListView);
+        case SP_FileDialogDetailedView: return editorIcon(EditorIcon::DetailView);
+        case SP_FileDialogContentsView: return editorIcon(EditorIcon::GridView);
+        case SP_FileDialogInfoView: return editorIcon(EditorIcon::Info);
         case SP_FileIcon: return editorIcon(EditorIcon::File);
         case SP_TrashIcon: return editorIcon(EditorIcon::Delete);
         case SP_ArrowDown: return editorIcon(EditorIcon::ChevronDown);
@@ -133,7 +146,15 @@ private:int kind_;
 class FileIcons final : public QFileIconProvider {
 public:
     QIcon icon(const QFileInfo& info) const override{return editorIcon(info.isDir()?EditorIcon::Folder:EditorIcon::File);}
-    QIcon icon(IconType type) const override{return editorIcon(type==File?EditorIcon::File:EditorIcon::Folder);}
+    QIcon icon(IconType type) const override{
+        switch(type){
+        case Computer: case Desktop: return editorIcon(EditorIcon::Computer);
+        case Drive: return editorIcon(EditorIcon::Drive);
+        case Trashcan: return editorIcon(EditorIcon::Delete);
+        case File: return editorIcon(EditorIcon::File);
+        default: return editorIcon(EditorIcon::Folder);
+        }
+    }
 };
 
 void nativeTitleColor(QWidget* window) {
@@ -144,6 +165,7 @@ void nativeTitleColor(QWidget* window) {
 }
 
 void applyTitleBar(QWidget* window,bool mac) {
+    mac=mac&&!window->property("studioNativeOnly").toBool();
     if(!window->property("studioNativeFlags").isValid())window->setProperty("studioNativeFlags",int(window->windowFlags()&~Qt::FramelessWindowHint));
     auto flags=Qt::WindowFlags::fromInt(window->property("studioNativeFlags").toInt());
     if(mac)flags|=Qt::FramelessWindowHint;
@@ -168,9 +190,22 @@ public:
     bool eventFilter(QObject* object,QEvent* event) override {
         auto* widget=qobject_cast<QWidget*>(object);if(!widget)return false;
         if(event->type()==QEvent::Polish) {
+            // Compact icon buttons need their own padding: Qt's file picker
+            // fixes these to about 30px, leaving no icon space with text padding.
+            if(auto* button=qobject_cast<QAbstractButton*>(widget);button&&!button->icon().isNull()) {
+                const auto* tool=qobject_cast<QToolButton*>(button);
+                if(button->text().isEmpty()||(tool&&tool->toolButtonStyle()==Qt::ToolButtonIconOnly))
+                    button->setProperty("studioIconOnly",true);
+            }
             if(auto* picker=qobject_cast<QFileDialog*>(widget)){static FileIcons icons;picker->setOption(QFileDialog::DontUseNativeDialog);picker->setIconProvider(&icons);}
             if(auto* dialog=qobject_cast<QDialog*>(widget);dialog&&dialog->isWindow()&&!dialog->property("studioChrome").toBool()) {
                 dialog->setProperty("studioChrome",true);
+                // QProgressDialog positions its own children in resizeEvent;
+                // an overlaid content wrapper hides its label, bar and Cancel.
+                if(qobject_cast<QProgressDialog*>(dialog)) {
+                    dialog->setProperty("studioNativeOnly",true);
+                    applyTitleBar(dialog,false);return false;
+                }
                 auto* content=new QWidget(dialog);content->setObjectName("dialogContent");if(dialog->layout())content->setLayout(dialog->layout());
                 auto* layout=new QVBoxLayout(dialog);layout->setContentsMargins(1,1,1,1);layout->setSpacing(0);
                 auto* title=new QWidget(dialog);title->setObjectName("dialogTitle");title->setProperty("studioDrag",true);
@@ -249,6 +284,7 @@ void installVisualStyle() {
         QToolButton#qt_toolbar_ext_button { padding: 2px; min-width: 18px; }
         QToolButton#newProjectDropTarget { padding: 4px; }
         QPushButton, QToolButton { background: #33353b; border: 1px solid #41434b; border-radius: 7px; padding: 5px 12px; min-height: 18px; }
+        QPushButton[studioIconOnly="true"], QToolButton[studioIconOnly="true"] { padding: 4px; }
         QPushButton:hover, QToolButton:hover { background: #3d4047; border-color: #565a64; }
         QPushButton:pressed, QToolButton:pressed { background: #27292e; }
         QPushButton:default, QPushButton[primary="true"], QToolButton:checked { background: #428bea; border-color: #589df4; color: white; }

@@ -119,6 +119,19 @@ public:
         case EditorIcon::ChevronUp: path({{7,14},{12,9},{17,14}});break;
         case EditorIcon::ChevronLeft: path({{14,7},{9,12},{14,17}});break;
         case EditorIcon::ChevronRight: path({{10,7},{15,12},{10,17}});break;
+        case EditorIcon::Home:
+            path({{3,11},{12,3},{21,11}});path({{6,9},{6,21},{10,21},{10,15},{14,15},{14,21},{18,21},{18,9}});break;
+        case EditorIcon::Computer:
+            p->drawRoundedRect(QRectF(3,4,18,13),1,1);line(12,17,12,21);line(7,21,17,21);break;
+        case EditorIcon::Drive:
+            path({{3,15},{6,5},{18,5},{21,15}});p->drawRoundedRect(QRectF(3,15,18,6),1,1);line(16,18,18,18);break;
+        case EditorIcon::ListView:
+        case EditorIcon::DetailView:
+            for(double y:{5.,12.,19.}){p->drawRect(QRectF(3,y-1,2,2));line(9,y,icon_==EditorIcon::DetailView?14:21,y);if(icon_==EditorIcon::DetailView)line(18,y,21,y);}break;
+        case EditorIcon::GridView:
+            for(double y:{4.,14.})for(double x:{4.,14.})p->drawRoundedRect(QRectF(x,y,6,6),1,1);break;
+        case EditorIcon::Info:
+            p->drawEllipse(QRectF(3,3,18,18));line(12,11,12,17);line(12,7,12,7.5);break;
         case EditorIcon::Link:
             p->translate(12,12);p->rotate(-35);p->drawRoundedRect(QRectF(-4,-10,8,12),4,4);
             p->drawRoundedRect(QRectF(-4,-2,8,12),4,4);break;

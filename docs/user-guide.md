@@ -4,13 +4,18 @@ This Windows 11 x64 preview opens and edits layered images locally. It is an ind
 
 ## Start a project
 
-In an installed build, use the Start menu shortcut. In a portable build, open `Compositor.exe`. Choose **File > New Canvas** to enter canvas dimensions, or **File > Import Image** to import a PNG, JPEG, TIFF or HEIC image. Import adds a layer to the current document. Each project has its own tab, layer selection and tool settings. The Layers panel selects the image or mask you are editing.
+In an installed build, use the Start menu shortcut. In a portable build, open `Compositor.exe`. Choose **File > New Canvas** to enter canvas dimensions, or **File > Import Image** to import PNG, JPEG, TIFF or HEIC images. Use **Import as** in the picker to open each selected image in a separate tab (the default), or add all selected images as **Layers in current project**. Each project has its own tab, layer selection and tool settings. The Layers panel selects the image or mask you are editing.
+
+Finish or cancel an active edit before opening separate tabs. During an edit that prevents switching projects, the picker offers import into the current project's layers.
+
+<!-- Native Windows capture at 100% scaling, using the generated two-image import regression fixture. -->
+![Importing selected images into separate tabs](images/import-images.png)
 
 Use **File > Open Project** for a saved `.comp` project. A `.comp` project is a directory containing its manifest and image assets. Copy or back up the complete directory. Save with **Ctrl+S**, or use **Save Project As** to make a separate project. An asterisk in the tab indicates unsaved changes. Closing a modified project offers Save, Discard or Cancel.
 
 ## Window appearance
 
-Windows title bars and system controls are the default. Turn on **View > Appearance > Mac-style title bar** for colored controls on the left; turn it off to restore the native Windows title bar. The choice applies immediately to the editor and dialogs and is remembered between launches. It changes only the window chrome; the editor's visual design stays the same.
+Windows title bars and system controls are the default. Turn on **View > Appearance > Mac-style title bar** for colored controls on the left; turn it off to restore the native Windows title bar. The choice applies immediately to the editor and dialogs and is remembered between launches. Progress windows always use native Windows title bars so their progress and Cancel controls stay visible. It changes only the window chrome; the editor's visual design stays the same.
 
 ## Navigate and arrange layers
 

@@ -18,6 +18,7 @@
 #include <QMessageBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QColorDialog>
 #include <QBuffer>
@@ -37,6 +38,7 @@
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QSettings>
+#include <QStandardItemModel>
 #include <QScopedValueRollback>
 #include <QScopeGuard>
 #include <QTabBar>
@@ -281,7 +283,29 @@ void MainWindow::openPath(const QString&path){
     const bool reuse=!current()||!importQueue_||!importQueue_->contains(current()->canvas);
     auto& destination=addEmptyProject(reuse);queueImageImports({path},&destination,{});
 }
-void MainWindow::importImage(){auto* target=current();auto paths=QFileDialog::getOpenFileNames(this,"Import Images",{},"Images (*.png *.jpg *.jpeg *.tif *.tiff *.heic *.heif);;All files (*)");if(!paths.isEmpty())queueImageImports(paths,target,{});}
+void MainWindow::importImage(){
+    auto* target=current();
+    const bool separateTabs=canSwitchProjects();
+    QFileDialog picker(this,"Import Images",{},"Images (*.png *.jpg *.jpeg *.tif *.tiff *.heic *.heif);;All files (*)");
+    picker.setOption(QFileDialog::DontUseNativeDialog);
+    picker.setFileMode(QFileDialog::ExistingFiles);
+    auto* mode=new QComboBox(&picker);mode->setObjectName("imageImportMode");
+    mode->addItems({"Separate tabs","Layers in current project"});
+    if(!separateTabs){
+        mode->setCurrentIndex(1);
+        auto* model=qobject_cast<QStandardItemModel*>(mode->model());model->item(0)->setEnabled(false);
+        mode->setToolTip("Apply or cancel the current edit to import into separate tabs.");
+    }
+    auto* label=new QLabel("Import as:",&picker);label->setBuddy(mode);
+    // The shared dialog chrome may already have wrapped Qt's file layout.
+    auto* layout=picker.findChild<QGridLayout*>();
+    if(!layout)throw std::runtime_error("The image picker layout is unavailable");
+    const int row=layout->rowCount();layout->addWidget(label,row,0);layout->addWidget(mode,row,1,1,layout->columnCount()-1);
+    if(picker.exec()!=QDialog::Accepted)return;
+    const auto paths=picker.selectedFiles();if(paths.isEmpty())return;
+    if(mode->currentIndex()==1)queueImageImports(paths,target,{});
+    else for(const auto& path:paths)openPath(path);
+}
 bool MainWindow::saveProject(bool saveAs){cropDraft_.reset();cropDrag_.reset();if(transformSession_&&transformSession_->persistent)applyTransformSession();auto*p=current();if(!p||!p->document||p->importing||p->projectBusy)return false;auto path=p->path;if(path.isEmpty()||saveAs){path=QFileDialog::getSaveFileName(this,"Save Compositor Project",path.isEmpty()?"Untitled.comp":path,"Compositor project directory (*.comp)");if(path.isEmpty())return false;if(!path.endsWith(".comp",Qt::CaseInsensitive))path+=".comp";}ProjectStore store(makeWicProjectCodec());store.save(nativePath(path),*p->document,p->active);p->path=path;p->history.markSaved();refresh(false);return true;}
 void MainWindow::exportImage(){
     auto*p=current();if(!p||!p->document||p->importing||p->projectBusy)return;

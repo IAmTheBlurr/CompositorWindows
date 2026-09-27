@@ -4,6 +4,7 @@ Results below describe actual local checkpoints, not Mac equivalence or broad ha
 
 | Checkpoint | Result |
 | --- | --- |
+| Dialog controls and import 2026-09-27 | Release application build and 33 focused CTest checks pass (dialog rendering, import batches/drafts, adjustment lifecycle, export and workspace). Actual Windows runs pass at 100% and 150%: 30 dialog layouts in both appearance modes, multi-image import through the real picker, and window chrome controls/persistence. Tests cover tabs/layers, Unicode names, cancellation, partial decode failure, original-project preservation, layer-batch undo, visible icons and usable progress Cancel. No new release package or installation was produced; full regression and ASAN were not repeated. |
 | Publication preview 0.1.4 | Release application builds from the staged source export using the prepared dependency cache. 24 selected CTest checks, the manual-update policy check, native window-control probe, and 18-step editing workflow pass. |
 | Preview 0.1.4 downloads | Six portable deployment checks pass, including hashes, matching source, manual-update distribution, cleaned-PATH health, native editing, and Unicode project reopen/export. Local MSI upgrade and installed cleaned-PATH health exit 0; the installed executable matches the package. |
 | Preview 0.1.3 window appearance | Release build; 43 affected UI checks pass. Native title bar switching, persistence, dialogs, and canvas probes pass at 100% and 150%. |
