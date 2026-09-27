@@ -1,4 +1,4 @@
-param([switch]$SkipBuild,[switch]$PortableOnly,[string]$Version='0.1.4')
+param([switch]$SkipBuild,[switch]$PortableOnly,[string]$Version='0.1.5')
 $ErrorActionPreference='Stop'
 $packageRoot=Split-Path $PSScriptRoot -Parent
 if($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'){throw 'Version must be a numeric semantic version'}

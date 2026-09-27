@@ -1,10 +1,12 @@
-# Compositor Windows preview 0.1.4
+# Compositor Windows preview 0.1.5
 
 This independent Windows 11 x64 port is based on Compositor 1.0.4 at
 `a19db9011282399785dc18efcfded904627bdcc2`. Compositor was created by
 [Robbie Tilton](https://github.com/robbietilton/Compositor); the original MIT
 copyright and dependency notices accompany this distribution. This independent
 port does not imply upstream endorsement.
+
+Version 0.1.5 fixes clipped file-picker and project-picker button icons and restores visible progress controls. Import Images offers separate tabs by default, or layers in the current project. Progress windows use native Windows title bars in both appearance modes. Install the newer MSI to upgrade an existing installation in place.
 
 Version 0.1.3 defaults to the native Windows title bar and system controls.
 **View > Appearance > Mac-style title bar** enables the optional colored controls

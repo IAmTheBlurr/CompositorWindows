@@ -10,7 +10,7 @@ To build a package, use PowerShell 7 in the Windows repository:
 
 ```powershell
 ./scripts/bootstrap-packaging.ps1
-./scripts/package.ps1 -Version 0.1.4
+./scripts/package.ps1 -Version 0.1.5
 ```
 
 Bootstrap downloads and verifies the pinned Qt corresponding source and WiX 5.0.2 compiler/UI archives. Building MSI files requires a .NET runtime (6 or later); this host uses .NET 8. Only the packaging host needs WiX/.NET. `scripts/msi/toolchain.json` records tool URLs and hashes. `-Offline` verifies cached inputs; `package.ps1` uses this mode automatically. `-PortableOnly` omits MSI generation. `-SkipBuild` packages the existing Release executable and must be used only after validating that binary against the current source.

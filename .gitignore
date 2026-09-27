@@ -52,6 +52,7 @@ __pycache__/
 /tests/**/reference*/
 /tests/**/run-*/
 /tests/**/fixtures/known-*/
+/tests/import_drafts/fixtures/import-*/
 !/tests/**/CMakeLists.txt
 !/tests/display_profile/fixtures/manifest.json
 !/tests/update/fixtures/TEST-ONLY-private-key.xml

@@ -8,6 +8,9 @@
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QImage>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QDialogButtonBox>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
@@ -57,7 +60,7 @@ struct Fixture {
             if(!file)return;
             if(elapsed.elapsed()>10000){failure="Owned import picker timed out";file->reject();driver.stop();return;}
             if(seen)return;seen=true;owned=file->parentWidget()==window.get()&&QApplication::activeModalWidget()==file;
-            try{file->activateWindow();file->setFocus();QTest::qWait(20);auto* focused=QApplication::focusWidget();require(file&&file->isActiveWindow()&&!project->canvas->hasFocus()&&(focused==file||file->isAncestorOf(focused)),"Owned import picker has keyboard focus before observing draft state");if(whileOpen)whileOpen();if(accept){file->selectFile(path);static_cast<QDialog*>(file.data())->accept();}else file->reject();}
+            try{file->activateWindow();file->setFocus();QTest::qWait(20);auto* focused=QApplication::focusWidget();require(file&&file->isActiveWindow()&&!project->canvas->hasFocus()&&(focused==file||file->isAncestorOf(focused)),"Owned import picker has keyboard focus before observing draft state");if(whileOpen)whileOpen();if(accept){file->findChild<QComboBox*>("imageImportMode")->setCurrentIndex(1);file->selectFile(path);static_cast<QDialog*>(file.data())->accept();}else file->reject();}
             catch(const std::exception& error){failure=QString::fromUtf8(error.what());if(file)file->reject();}driver.stop();
         });
         driver.start();trigger(*window,"file.import");driver.stop();
@@ -71,6 +74,47 @@ struct Fixture {
     void crop(){trigger(*window,"tool.crop");drag({10,10},{70,50});require(project->canvas->cropOverlay()==editing::Rect{10,10,60,40}&&command(*window,"crop.apply")->isEnabled(),"Pending custom crop fixture");}
     void transform(){trigger(*window,"tool.move");trigger(*window,"transform.free");QDoubleSpinBox* x=nullptr;for(auto* field:window->findChildren<QDoubleSpinBox*>())if(field->accessibleName()=="X")x=field;require(x&&x->isEnabled(),"Transform X field");x->setValue(17);project->canvas->setFocus();require(command(*window,"transform.apply")->isEnabled()&&project->document->layers.front().transform.x==17&&project->history.undoCount()==0,"Persistent affine draft is effective but uncommitted");}
 };
+void batchPicker(bool layers,bool empty,bool cancel=false,bool corrupt=false){
+    QTemporaryDir directory;require(directory.isValid(),"Batch fixture directory");
+    QSettings::setDefaultFormat(QSettings::IniFormat);QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,directory.path());
+    MainWindow window(true);EditorProject* original=empty?nullptr:&window.addProject(document(),"Original project");
+    const auto before=original?original->document:std::optional<Document>{};
+    const auto first=directory.filePath(QString::fromUtf8("First 画像.png")),second=directory.filePath("Second image.png");
+    QImage image(8,6,QImage::Format_RGBA8888);image.fill(Qt::red);require(image.save(first),"Save first batch image");
+    image=QImage(13,9,QImage::Format_RGBA8888);image.fill(Qt::green);require(image.save(second),"Save second batch image");
+    QStringList paths{first,second};if(corrupt){const auto bad=directory.filePath("Broken.png");QFile file(bad);require(file.open(QIODevice::WriteOnly),"Create broken image");file.write("broken");file.close();paths.prepend(bad);}
+    window.resize(1100,800);window.show();
+    bool seen=false;QString failure;QTimer driver;driver.setInterval(10);
+    QObject::connect(&driver,&QTimer::timeout,&window,[&]{
+        auto* picker=qobject_cast<QFileDialog*>(QApplication::activeModalWidget());if(!picker||seen)return;seen=true;driver.stop();
+        try{
+            auto* mode=picker->findChild<QComboBox*>("imageImportMode");require(mode&&mode->currentIndex()==0,"Import defaults to separate tabs");if(layers)mode->setCurrentIndex(1);
+            picker->setDirectory(directory.path());auto* names=picker->findChild<QLineEdit*>("fileNameEdit");require(names,"File-name input exists");
+            QStringList quoted;for(const auto& path:paths)quoted.append('"'+path+'"');names->setText(quoted.join(' '));
+            require(picker->selectedFiles().size()==paths.size(),"Picker retains every selected path");
+            if(const auto output=qEnvironmentVariable("COMPOSITOR_DIALOG_CAPTURE");!output.isEmpty()){QDir().mkpath(output);require(picker->grab().save(output+"/Import Images.png"),"Capture real import picker");}
+            if(cancel)picker->reject();else picker->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Open)->click();
+        }catch(const std::exception& error){failure=QString::fromUtf8(error.what());picker->reject();}
+    });
+    driver.start();trigger(window,"file.import");driver.stop();require(seen,"Actual multi-image picker visited");if(!failure.isEmpty())throw std::runtime_error(failure.toStdString());
+    auto* tabs=window.findChild<QTabWidget*>();require(tabs,"Project tabs present");
+    QElapsedTimer elapsed;elapsed.start();for(;;){QTest::qWait(10);auto* queue=ui::ImportQueue::find(&window);if(!queue||queue->idle())break;require(elapsed.elapsed()<10000,"Batch imports finish");}
+    if(cancel){require(tabs->count()==1&&(!original||original->document==before),"Cancel preserves tabs and document");return;}
+    if(corrupt){QTest::qWait(20);auto* error=window.findChild<QMessageBox*>("imageImportErrors");require(error&&error->detailedText().contains("Broken.png"),"Corrupt file reported");error->accept();QApplication::processEvents();}
+    if(layers){require(original&&tabs->count()==1&&original->document->layers.size()==3,"All selected images added to existing project");require(original->document->layers[1].raster->width==8&&original->document->layers[2].raster->width==13,"Both distinct image rasters retained in order");require(original->history.undoCount()==1,"Layer batch is one undo step");trigger(window,"edit.undo");require(original->document==before,"Layer batch undo restores original");}
+    else{
+        require(tabs->count()==(empty?2:3)+(corrupt?1:0),"Separate tab for every selected file");
+        if(original)require(original->document==before&&original->history.undoCount()==0,"Separate tabs preserve original document");
+        auto* tree=window.findChild<QTreeWidget*>("layersTree");
+        const int start=(empty?0:1)+(corrupt?1:0);
+        for(int i=0;i<2;++i){tabs->setCurrentIndex(start+i);QApplication::processEvents();require(tree->topLevelItemCount()==1&&tree->topLevelItem(0)->text(0)==QFileInfo(paths[paths.size()-2+i]).completeBaseName(),"Each imported tab contains the corresponding image");}
+    }
+}
+void batch_tabs_empty(){batchPicker(false,true);}
+void batch_tabs_existing(){batchPicker(false,false);}
+void batch_layers(){batchPicker(true,false);}
+void batch_cancel(){batchPicker(false,false,true);}
+void batch_partial_failure(){batchPicker(false,true,false,true);}
 void gradient_accept(){Fixture f;f.gradient();const auto original=f.project->document->layers.front();const auto preview=f.project->gradientPreview;f.picker(true,[&]{require(f.project->gradientPreview==preview,"Picker focus preserves gradient");});f.imported();std::cout<<"gradient_after="<<bool(f.project->gradientPreview)<<" undo="<<f.project->history.undoCount()<<'\n';require(f.project->gradientPreview==preview&&f.project->document->layers.front()==original&&f.project->history.undoCount()==1,"Import preserves unapplied gradient and commits only image import");trigger(*f.window,"gradient.cancel");f.imported();require(!f.project->gradientPreview&&f.project->history.undoCount()==1,"Explicit gradient Cancel retains imported image/history");}
 void gradient_picker_cancel(){Fixture f;f.gradient();const auto before=f.project->document;const auto preview=f.project->gradientPreview;f.picker(false);require(f.project->document==before&&f.project->gradientPreview==preview&&f.project->history.undoCount()==0,"Picker Cancel preserves gradient without import/history");}
 void polygon_accept(){Fixture f;f.polygon();const auto points=f.project->canvas->selectionDraft()->points;f.picker(true,[&]{require(f.project->canvas->selectionDraft()&&f.project->canvas->selectionDraft()->points==points,"Picker focus preserves polygon");});f.imported();require(f.project->canvas->selectionDraft()&&f.project->canvas->selectionDraft()->points==points&&!f.project->document->selection&&f.project->history.undoCount()==1,"Import keeps exact polygon draft and only import history");f.project->canvas->setFocus();QTest::keyClick(f.project->canvas,Qt::Key_Return);require(!f.project->canvas->selectionDraft()&&f.project->document->selection&&f.project->document->selection->coverage->pixel(60,20)>0&&f.project->history.undoCount()==2&&f.project->history.undoName()=="Polygonal Lasso","Retained polygon completes once after import");trigger(*f.window,"edit.undo");f.imported();require(!f.project->document->selection&&f.project->history.undoCount()==1,"Selection Undo retains the separate imported image");}
@@ -84,6 +128,6 @@ void freehand_focus_cancel(){Fixture f;trigger(*f.window,"tool.lasso");f.drag({1
 }
 int main(int argc,char** argv){
     QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);QApplication app(argc,argv);std::cout<<std::unitbuf;QDir().mkpath(QFileInfo(QString::fromUtf8(__FILE__)).dir().filePath("fixtures"));
-    const std::map<std::string,void(*)()> cases{{"gradient_accept",gradient_accept},{"gradient_picker_cancel",gradient_picker_cancel},{"polygon_accept",polygon_accept},{"polygon_picker_cancel",polygon_picker_cancel},{"crop_accept",crop_accept},{"crop_picker_cancel",crop_picker_cancel},{"transform_accept",transform_accept},{"transform_picker_cancel",transform_picker_cancel},{"brush_focus_cancel",brush_focus_cancel},{"freehand_focus_cancel",freehand_focus_cancel}};
+    const std::map<std::string,void(*)()> cases{{"batch_tabs_empty",batch_tabs_empty},{"batch_tabs_existing",batch_tabs_existing},{"batch_layers",batch_layers},{"batch_cancel",batch_cancel},{"batch_partial_failure",batch_partial_failure},{"gradient_accept",gradient_accept},{"gradient_picker_cancel",gradient_picker_cancel},{"polygon_accept",polygon_accept},{"polygon_picker_cancel",polygon_picker_cancel},{"crop_accept",crop_accept},{"crop_picker_cancel",crop_picker_cancel},{"transform_accept",transform_accept},{"transform_picker_cancel",transform_picker_cancel},{"brush_focus_cancel",brush_focus_cancel},{"freehand_focus_cancel",freehand_focus_cancel}};
     try{require(argc==2&&cases.contains(argv[1]),"Provide named import-draft case");std::cout<<"START "<<argv[1]<<'\n';cases.at(argv[1])();std::cout<<"PASS "<<argv[1]<<'\n';return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<(argc>1?argv[1]:"argument")<<": "<<error.what()<<'\n';return 1;}
 }
