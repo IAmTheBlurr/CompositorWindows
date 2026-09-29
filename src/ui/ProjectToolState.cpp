@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include <QSignalBlocker>
+#include <QSettings>
 #include <QSpinBox>
 #include <QJsonDocument>
 #include "effects/Adjustments.h"
@@ -22,6 +23,7 @@ std::string ProjectFilterSettings::beginAdjustment(const QString& kind,QColor fo
         // Filters.swift313-315 always starts a new map from today's palette.
         json["gradientMapSettings"]=QJsonObject{{"shadows",color(foreground)},{"highlights",color(backgroundColor)},{"reversed",false}};
     }
+    if(extraAdjustments.contains(kind))json=extraAdjustments[kind].toObject();
     return QJsonDocument(json).toJson(QJsonDocument::Compact).toStdString();
 }
 void ProjectFilterSettings::rememberAdjustment(const std::string& json) {
@@ -30,6 +32,7 @@ void ProjectFilterSettings::rememberAdjustment(const std::string& json) {
     else if(kind=="Exposure")exposure=value["exposureSettings"].toObject();
     else if(kind=="Gradient Map")gradientMap=value["gradientMapSettings"].toObject();
     else if(kind=="Grain")grain=value["grainSettings"].toObject();
+    else if(kind!="Hue/Saturation"&&kind!="Levels")extraAdjustments[kind]=value;
 }
 namespace {
 template<class T> T* control(QObject* root,const char* objectName,const char* accessibleName="") {
@@ -54,11 +57,11 @@ void MainWindow::captureToolState(EditorProject& project) const {
     state.tool=tool_;state.foreground=foreground_;state.background=background_;
     state.brushMode=brushMode_;
     state.brushSettings=brushSettings_;state.cloneSettings=cloneSettings_;state.blurSettings=blurSettings_;state.healingMode=healingMode_;
-    state.gradientSettings=gradientSettings_;state.shapeStyle=shapeStyle_;
+    state.gradientSettings=gradientSettings_;state.shapeStyle=shapeStyle_;state.textStyle=textStyle_;
     state.ellipse=ellipse_;state.selectionAntialias=selectionAntialias_;state.selectionMode=selectionMode_;
     state.cropRatioChoice=cropRatioChoice_;state.lassoKind=lassoKind_;
     state.selectionExpandAmount=selectionExpandAmount_;state.selectionContractAmount=selectionContractAmount_;
-    state.wandTolerance=wandTolerance_;state.wandSampleRadius=wandSampleRadius_;state.wandContiguous=wandContiguous_;state.wandAllLayers=wandAllLayers_;
+    state.wandTolerance=wandTolerance_;state.wandSampleRadius=wandSampleRadius_;state.wandContiguous=wandContiguous_;state.wandAllLayers=wandAllLayers_;state.objectSelection=objectSelection_;state.objectEdgeOffset=objectEdgeOffset_;
     state.maskPaintWhite=maskPaintWhite_;state.showSampleRing=showSampleRing_;
     if(project.canvas)state.showPixelGrid=project.canvas->showPixelGrid;
     state.lockRatio=lockRatio_;state.autoSelectLayers=autoSelectLayers_;state.transformControls=transformControls_;state.snapping=snapping_;
@@ -69,14 +72,14 @@ void MainWindow::restoreToolState(const EditorProject& project) {
     tool_=state.tool;foreground_=state.foreground;background_=state.background;
     brushMode_=state.brushMode;
     brushSettings_=state.brushSettings;cloneSettings_=state.cloneSettings;blurSettings_=state.blurSettings;healingMode_=state.healingMode;
-    gradientSettings_=state.gradientSettings;shapeStyle_=state.shapeStyle;
+    gradientSettings_=state.gradientSettings;shapeStyle_=state.shapeStyle;textStyle_=state.textStyle;
     ellipse_=state.ellipse;selectionAntialias_=state.selectionAntialias;selectionMode_=state.selectionMode;
     cropRatioChoice_=state.cropRatioChoice;lassoKind_=state.lassoKind;
     selectionExpandAmount_=state.selectionExpandAmount;selectionContractAmount_=state.selectionContractAmount;
-    wandTolerance_=state.wandTolerance;wandSampleRadius_=state.wandSampleRadius;wandContiguous_=state.wandContiguous;wandAllLayers_=state.wandAllLayers;
+    wandTolerance_=state.wandTolerance;wandSampleRadius_=state.wandSampleRadius;wandContiguous_=state.wandContiguous;wandAllLayers_=state.wandAllLayers;objectSelection_=state.objectSelection;objectEdgeOffset_=state.objectEdgeOffset;
     maskPaintWhite_=state.maskPaintWhite;showSampleRing_=state.showSampleRing;
     if(project.canvas)project.canvas->showPixelGrid=state.showPixelGrid;
-    lockRatio_=state.lockRatio;autoSelectLayers_=state.autoSelectLayers;transformControls_=state.transformControls;snapping_=state.snapping;
+    lockRatio_=state.lockRatio;autoSelectLayers_=QSettings().value("tool/autoSelect",false).toBool();transformControls_=QSettings().value("tool/transformControls",true).toBool();snapping_=QSettings().value("tool/snap",true).toBool();
     lastBrushPoint_=state.lastBrushPoint;lastBrushLayer_=state.lastBrushLayer;lastBrushMask_=state.lastBrushMask;
 
     combo(this,"gradientShape","",int(gradientSettings_.shape));
@@ -91,6 +94,7 @@ void MainWindow::restoreToolState(const EditorProject& project) {
     combo(this,"selectionMode","Selection mode",int(selectionMode_));
     check(this,"selectionAntialias","selectionOptions","Antialias",selectionAntialias_);
     if(auto* item=control<QSpinBox>(this,"wandTolerance","Wand tolerance")){const QSignalBlocker blocker(item);item->setValue(wandTolerance_);}
+    combo(this,"wandMode","",objectSelection_?1:0);if(auto*spin=findChild<QSpinBox*>("objectEdgeOffset")){const QSignalBlocker block(spin);spin->setValue(objectEdgeOffset_);}
     combo(this,"wandSampleSize","Wand sample size",wandSampleRadius_);
     check(this,"wandContiguous","wandOptions","Contiguous",wandContiguous_);
     check(this,"wandAllLayers","wandOptions","Sample All Layers",wandAllLayers_);

@@ -105,7 +105,7 @@ void MainWindow::publishTransformSession(bool finish) {
             const auto output=finish?state.pixels->apply():state.pixels->preview();
             auto* layer=layerIn(result,state.target);if(!layer)throw std::runtime_error("The selected pixel target was removed");
             *layer=output.layer;
-            if(layer->raster!=layerIn(state.original,state.target)->raster)layer->shapeJson.clear();
+            if(layer->raster!=layerIn(state.original,state.target)->raster)layer->rasterizeSource();
             result.selection=Selection{output.selection};
             if(state.pixelMove&&state.original.selection&&state.original.selection->outline)
                 result.selection=editing::moveSelectionCoverage(state.original.selection,state.moveOffset);
@@ -137,7 +137,7 @@ void MainWindow::publishTransformSession(bool finish) {
             if(state.corners) {
                 const auto shape=state.group?editing_transform::carriedCorners(placement,state.draft,*state.corners):*state.corners;
                 *layer=editing_transform::distortLayer(original,placement,shape,{finish?0:2048,finish,{}});
-                layer->shapeJson.clear();
+                layer->rasterizeSource();
             } else {
                 layer->transform=placement;
                 if(original.mask) {

@@ -19,8 +19,13 @@ void outlined(QPainter& painter,const QPainterPath& path,qreal whiteWidth,qreal 
         painter.strokePath(path,pen);
     }
 }
-void toolIcon(QPainter& painter,editing::LassoKind kind,const QRectF& box){
+void toolIcon(QPainter& painter,editing::LassoKind kind,const QRectF& box,bool object=false){
     QPainterPath path;
+    if(object){
+        path.addRoundedRect(box.adjusted(3,2,-3,-2),2,2);
+        for(const auto corner:std::array<QPointF,4>{box.topLeft(),box.topRight(),box.bottomLeft(),box.bottomRight()}){const double dx=corner.x()==box.left()?1:-1,dy=corner.y()==box.top()?1:-1;path.moveTo(corner+QPointF(0,3*dy));path.lineTo(corner);path.lineTo(corner+QPointF(3*dx,0));}
+        outlined(painter,path,3.2,1.2);return;
+    }
     if(kind==editing::LassoKind::Polygonal){
         const qreal unit=box.width()/18;
         const auto point=[&](qreal x,qreal y){return QPointF(box.x()+x*unit,box.y()+y*unit);};
@@ -42,7 +47,7 @@ void toolIcon(QPainter& painter,editing::LassoKind kind,const QRectF& box){
     path.cubicTo(box.x()+6,box.y()+10,box.x()+9,box.y()+11,box.x()+8,box.y()+12);
     outlined(painter,path,3.2,1.2);
 }
-QCursor makeCursor(editing::LassoKind kind,editing::SelectionMode mode,qreal scale){
+QCursor makeCursor(editing::LassoKind kind,editing::SelectionMode mode,qreal scale,bool object=false){
     QImage image(qRound(44*scale),qRound(36*scale),QImage::Format_ARGB32_Premultiplied);image.fill(Qt::transparent);
     QPainter painter(&image);painter.setRenderHint(QPainter::Antialiasing);painter.scale(scale,scale);
     // A Windows vector crosshair with a fixed logical hot spot. Its white outline
@@ -51,7 +56,7 @@ QCursor makeCursor(editing::LassoKind kind,editing::SelectionMode mode,qreal sca
     cross.moveTo(0,7);cross.lineTo(5,7);cross.moveTo(9,7);cross.lineTo(14,7);
     cross.moveTo(7,0);cross.lineTo(7,5);cross.moveTo(7,9);cross.lineTo(7,14);
     outlined(painter,cross,3.2,1.2);
-    const QRectF box(hotSpot.x()+7,hotSpot.y()+7,12,12);toolIcon(painter,kind,box);
+    const QRectF box(hotSpot.x()+7,hotSpot.y()+7,12,12);toolIcon(painter,kind,box,object);
     if(mode!=editing::SelectionMode::Replace){
         const QPointF center(box.right()+5,box.center().y());QPainterPath badge;
         badge.moveTo(center.x()-3,center.y());badge.lineTo(center.x()+3,center.y());
@@ -72,5 +77,11 @@ QCursor selectionToolCursor(editing::LassoKind kind,editing::SelectionMode mode,
     ScaleCache entry{deviceScale,{}};const std::array<editing::LassoKind,4> kinds{editing::LassoKind::Freehand,editing::LassoKind::Polygonal,editing::LassoKind::Rectangle,editing::LassoKind::Ellipse};
     for(size_t k=0;k<4;++k)for(int m=0;m<3;++m)entry.cursors[k*3+size_t(m)]=makeCursor(kinds[k],editing::SelectionMode(m),deviceScale);
     cache.push_front(std::move(entry));if(cache.size()>8)cache.pop_back();return cache.front().cursors[size_t(icon)*3+size_t(selected)];
+}
+QCursor objectSelectionCursor(editing::SelectionMode mode,qreal scale){
+    (void)selectionToolCursor(editing::LassoKind::Rectangle,mode,scale);
+    struct Entry {qreal scale;editing::SelectionMode mode;QCursor cursor;};static std::list<Entry> cache;
+    for(auto it=cache.begin();it!=cache.end();++it)if(it->scale==scale&&it->mode==mode){cache.splice(cache.begin(),cache,it);return cache.front().cursor;}
+    cache.push_front({scale,mode,makeCursor(editing::LassoKind::Rectangle,mode,scale,true)});if(cache.size()>24)cache.pop_back();return cache.front().cursor;
 }
 }

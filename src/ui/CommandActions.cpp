@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "ProjectLayerDrag.h"
+#include "LayerClipboard.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QMessageBox>
@@ -21,6 +23,7 @@ ui::CommandState MainWindow::commandState(EditorProject* owner){
     state.moveTool=tool_==Tool::Move;
     const auto* mime=QApplication::clipboard()->mimeData();
     state.clipboardImage=mime&&(mime->hasImage()||mime->hasFormat("image/png"));
+    state.clipboardLayers=bool(ui::copiedLayerSnapshot(mime));
     if(!project)return state;
     state.projectBusy=project->projectBusy;state.importing=project->importing;
     populateEditPanelCommandState(state,project);

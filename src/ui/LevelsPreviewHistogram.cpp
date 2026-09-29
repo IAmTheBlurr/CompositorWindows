@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 #include "LevelsPreviewHistogram.h"
 #include "editing/Selection.h"
 #include <algorithm>
@@ -11,7 +12,7 @@ LevelsPreviewHistogramResult levelsPreviewHistogram(const Raster& source,const T
     const Document& document,const std::function<bool()>& cancelled){
     auto check=[&]{if(cancelled&&cancelled())throw std::runtime_error("Histogram cancelled");};check();
     if(source.width<1||source.height<1||source.width>30000||source.height>30000||
-       uint64_t(source.width)*source.height>100000000||!mapping.valid()||
+       uint64_t(source.width)*source.height>limits::surfacePixels||!mapping.valid()||
        source.tiles.size()!=size_t((source.width+255)/256)*size_t((source.height+255)/256)||
        std::any_of(source.tiles.begin(),source.tiles.end(),[](const auto& tile){return !tile;}))
         throw std::invalid_argument("Invalid Levels preview source");

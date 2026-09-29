@@ -1,8 +1,14 @@
 // Formula translations from pinned Compositor, copyright Wonder Assembly LLC 2026 (MIT).
 // See windows/LICENSE and docs/effects.md for exact source and reference limitations.
+#include "core/DocumentLimits.h"
 #include "Adjustments.h"
 #include "effects_tools/CurveMath.h"
 #include "graphics/PixelAlgorithms.h"
+#include "filters/PixelFilters.h"
+extern "C" {
+#include "graphics/upstream/AdjustPixels.h"
+#include "graphics/upstream/NoisePixels.h"
+}
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -18,7 +24,7 @@
 namespace compositor::effects {
 namespace {
 using RGB=std::array<double,3>;
-constexpr std::array<const char*,6> kinds{"Hue/Saturation","Levels","Curves","Exposure","Gradient Map","Grain"};
+constexpr std::array<const char*,12> kinds{"Hue/Saturation","Levels","Curves","Exposure","Gradient Map","Grain","Black & White","Color Balance","Invert","Gaussian Blur","Motion Blur","Add Noise"};
 constexpr std::array<const char*,7> ranges{"Master","Reds","Yellows","Greens","Cyans","Blues","Magentas"};
 [[noreturn]] void bad(){throw std::invalid_argument("Malformed or unsupported adjustment settings");}
 QString text(std::string_view s){return QString::fromUtf8(s.data(),qsizetype(s.size()));}
@@ -42,13 +48,17 @@ struct Settings {
  size_t kind{};std::array<Level,4> levels{};std::array<Curve,4> curves;
  std::array<HSVChange,7> hsv{};std::array<Band,7> bands{{{0,0,360,360},{315,345,15,45},{15,45,75,105},{75,105,135,165},{135,165,195,225},{195,225,255,285},{255,285,315,345}}};
  size_t selectedRange{};bool colorize{},invertRange{},reverse{};double exposure{},offset{},gamma{1};RGB shadows{0,0,0},highlights{1,1,1};double amount{25},size{1.5},roughness{50};uint32_t seed{};
- bool identity()const{switch(kind){case 0:return !colorize&&std::all_of(hsv.begin(),hsv.end(),[](auto c){return c.zero();});case 1:return std::all_of(levels.begin(),levels.end(),[](auto l){return l.identity();});case 2:return std::all_of(curves.begin(),curves.end(),[](const auto&c){return c.identity();});case 3:return exposure==0&&offset==0&&gamma==1;case 5:return amount==0;default:return false;}}
+ std::array<float,6> bw{.4f,.6f,.4f,.6f,.2f,.8f};bool tint{},preserveLuminosity{true};double tintHue{40},tintSaturation{20};std::array<float,9> balance{};filters::Settings filter;uint32_t noiseSeed{};
+ bool identity()const{switch(kind){case 0:return !colorize&&std::all_of(hsv.begin(),hsv.end(),[](auto c){return c.zero();});case 1:return std::all_of(levels.begin(),levels.end(),[](auto l){return l.identity();});case 2:return std::all_of(curves.begin(),curves.end(),[](const auto&c){return c.identity();});case 3:return exposure==0&&offset==0&&gamma==1;case 5:return amount==0;case 7:return std::all_of(balance.begin(),balance.end(),[](float v){return v==0;});default:return false;}}
 };
 Settings settings(const QJsonObject&o){Settings s;s.kind=named(o["kind"],kinds);s.hsv[0]=hsvChange(o);s.colorize=boolean(o["colorize"]);auto l=object(o["levels"]);channel(l["channel"]);auto la=array(l["ranges"]);if(la.size()!=4)bad();for(int i=0;i<4;++i)s.levels[i]=level(la[i]);auto c=object(o["curves"]);channel(c["channel"]);auto ca=array(c["channels"]);if(ca.size()!=4)bad();for(int i=0;i<4;++i)s.curves[i]=curve(ca[i]);
  if(!missing(o,"hsvSettings")){auto h=object(o["hsvSettings"]);s.selectedRange=named(h["range"],ranges);s.colorize=boolean(h["colorize"]);s.invertRange=boolean(h["invertRange"]);s.hsv={};auto values=array(h["adjustments"]);if(values.size()%2)bad();for(qsizetype i=0;i<values.size();i+=2)s.hsv[named(values[i],ranges)]=hsvChange(values[i+1]);auto bands=array(h["bands"]);if(bands.size()%2)bad();for(qsizetype i=0;i<bands.size();i+=2){auto b=object(bands[i+1]);s.bands[named(bands[i],ranges)]={number(b["falloffStart"]),number(b["rangeStart"]),number(b["rangeEnd"]),number(b["falloffEnd"])};}}
  if(!missing(o,"exposureSettings")){auto e=object(o["exposureSettings"]);s.exposure=number(e["exposure"],-20,20);s.offset=number(e["offset"],-.5,.5);s.gamma=number(e["gamma"],.01,9.99);}
  if(!missing(o,"gradientMapSettings")){auto g=object(o["gradientMapSettings"]);s.shadows=color(g["shadows"]);s.highlights=color(g["highlights"]);s.reverse=boolean(g["reversed"]);}
- if(!missing(o,"grainSettings")){auto g=object(o["grainSettings"]);s.amount=number(g["amount"],0,100);s.size=number(g["size"],.5,20);s.roughness=number(g["roughness"],0,100);auto seed=number(g["seed"],0,4294967295.);if(std::trunc(seed)!=seed)bad();s.seed=uint32_t(seed);}return s;
+ if(!missing(o,"grainSettings")){auto g=object(o["grainSettings"]);s.amount=number(g["amount"],0,100);s.size=number(g["size"],.5,20);s.roughness=number(g["roughness"],0,100);auto seed=number(g["seed"],0,4294967295.);if(std::trunc(seed)!=seed)bad();s.seed=uint32_t(seed);}
+ if(!missing(o,"blackWhiteSettings")){auto b=object(o["blackWhiteSettings"]);constexpr const char* keys[]{"reds","yellows","greens","cyans","blues","magentas"};for(int i=0;i<6;++i)s.bw[i]=float(number(b[keys[i]],-200,300)/100);s.tint=boolean(b["tint"]);s.tintHue=number(b["tintHue"],0,360);s.tintSaturation=number(b["tintSaturation"],0,100);}
+ if(!missing(o,"colorBalanceSettings")){auto b=object(o["colorBalanceSettings"]);constexpr const char* keys[]{"shadowCyanRed","shadowMagentaGreen","shadowYellowBlue","midCyanRed","midMagentaGreen","midYellowBlue","highlightCyanRed","highlightMagentaGreen","highlightYellowBlue"};for(int i=0;i<9;++i)s.balance[i]=float(number(b[keys[i]],-100,100)/100);s.preserveLuminosity=boolean(b["preserveLuminosity"]);}
+ s.filter.radius=missing(o,"blurRadius")?10:number(o["blurRadius"],.1,250);s.filter.angle=missing(o,"motionAngle")?0:number(o["motionAngle"],-90,90);s.filter.distance=missing(o,"motionDistance")?10:number(o["motionDistance"],1,2000);s.filter.amount=missing(o,"noiseAmount")?10:number(o["noiseAmount"],.1,400);s.filter.gaussian=missing(o,"noiseGaussian")?false:boolean(o["noiseGaussian"]);s.filter.monochromatic=missing(o,"noiseMonochromatic")?false:boolean(o["noiseMonochromatic"]);double noiseSeed=missing(o,"noiseSeed")?0:number(o["noiseSeed"],0,4294967295.);if(std::trunc(noiseSeed)!=noiseSeed)bad();s.noiseSeed=uint32_t(noiseSeed);return s;
 }
 RGB toHSL(RGB c){auto hi=*std::max_element(c.begin(),c.end()),lo=*std::min_element(c.begin(),c.end()),light=(hi+lo)/2,delta=hi-lo;if(!(delta>0))return {0,0,light};auto sat=delta/(1-std::abs(2*light-1));double hue;if(hi==c[0])hue=(c[1]-c[2])/delta;else if(hi==c[1])hue=(c[2]-c[0])/delta+2;else hue=(c[0]-c[1])/delta+4;hue*=60;if(hue<0)hue+=360;return {hue,std::min(1.,sat),light};}
 RGB toRGB(RGB hsl){auto[h,s,l]=hsl;if(!(s>0))return {l,l,l};auto chroma=(1-std::abs(2*l-1))*s,sector=h/60,second=chroma*(1-std::abs(std::fmod(sector,2.)-1)),base=l-chroma/2;RGB c{};switch(int(sector)){case 0:c={chroma,second,0};break;case 1:c={second,chroma,0};break;case 2:c={0,chroma,second};break;case 3:c={0,second,chroma};break;case 4:c={second,0,chroma};break;default:c={chroma,0,second};}for(auto&v:c)v=std::clamp(v+base,0.,1.);return c;}
@@ -60,15 +70,22 @@ Pixel sampleCube(Pixel pixel,const std::vector<std::array<float,3>>&v){if(!pixel
 std::array<float,768> tables(const Settings&s){std::array<float,768> out{};for(int c=0;c<3;++c)for(int i=0;i<256;++i){double result;if(s.kind==1)result=s.levels[0].apply(s.levels[c+1].apply(i/255.));else if(s.kind==2)result=s.curves[0].value(s.curves[c+1].value(i))/255.;else{double encoded=i/255.,linear=encoded<=.04045?encoded/12.92:std::pow((encoded+.055)/1.055,2.4);linear=std::pow(std::max(0.,linear*std::pow(2.,s.exposure)+s.offset),1/s.gamma);result=linear<=.0031308?linear*12.92:1.055*std::pow(linear,1/2.4)-.055;}out[c*256+i]=float(std::clamp(result,0.,1.));}return out;}
 std::array<uint8_t,768> gradient(const Settings&s){auto dark=s.reverse?s.highlights:s.shadows,light=s.reverse?s.shadows:s.highlights;std::array<uint8_t,768> out{};for(int i=0;i<256;++i)for(int c=0;c<3;++c)out[i*3+c]=byte((dark[c]+(light[c]-dark[c])*i/255.)*255);return out;}
 }
-std::string defaultAdjustmentJson(std::string_view kind){named(text(kind),kinds);QJsonObject range{{"black",0},{"white",255},{"gamma",1},{"outputBlack",0},{"outputWhite",255}};QJsonArray ls,cs;for(int i=0;i<4;++i){ls.append(range);cs.append(QJsonArray{QJsonObject{{"x",0},{"y",0}},QJsonObject{{"x",255},{"y",255}}});}return QJsonDocument(QJsonObject{{"kind",text(kind)},{"hue",0},{"saturation",0},{"lightness",0},{"colorize",false},{"levels",QJsonObject{{"channel","RGB"},{"ranges",ls}}},{"curves",QJsonObject{{"channel","RGB"},{"channels",cs}}}}).toJson(QJsonDocument::Compact).toStdString();}
+std::string defaultAdjustmentJson(std::string_view kind){named(text(kind),kinds);QJsonObject range{{"black",0},{"white",255},{"gamma",1},{"outputBlack",0},{"outputWhite",255}};QJsonArray ls,cs;for(int i=0;i<4;++i){ls.append(range);cs.append(QJsonArray{QJsonObject{{"x",0},{"y",0}},QJsonObject{{"x",255},{"y",255}}});}
+ QJsonObject root{{"kind",text(kind)},{"hue",0},{"saturation",0},{"lightness",0},{"colorize",false},{"levels",QJsonObject{{"channel","RGB"},{"ranges",ls}}},{"curves",QJsonObject{{"channel","RGB"},{"channels",cs}}}};
+ if(kind=="Black & White")root["blackWhiteSettings"]=QJsonObject{{"reds",40},{"yellows",60},{"greens",40},{"cyans",60},{"blues",20},{"magentas",80},{"tint",false},{"tintHue",40},{"tintSaturation",20}};
+ if(kind=="Color Balance")root["colorBalanceSettings"]=QJsonObject{{"shadowCyanRed",0},{"shadowMagentaGreen",0},{"shadowYellowBlue",0},{"midCyanRed",0},{"midMagentaGreen",0},{"midYellowBlue",0},{"highlightCyanRed",0},{"highlightMagentaGreen",0},{"highlightYellowBlue",0},{"preserveLuminosity",true}};
+ return QJsonDocument(root).toJson(QJsonDocument::Compact).toStdString();}
+
 void validateAdjustmentJson(std::string_view json){settings(parse(json));}
+double adjustmentSamplingMargin(std::string_view json){auto s=settings(parse(json));return s.kind==9?s.filter.radius*3+2:s.kind==10?s.filter.distance/std::sqrt(12.)*3+2:0;}
 std::shared_ptr<const Raster> applyAdjustment(std::shared_ptr<const Raster> source,std::string_view json,const GrayRaster* selection,AdjustmentRegion region,const std::function<bool()>& cancelled){
  auto cancel=[&]{if(cancelled&&cancelled())throw std::runtime_error("Adjustment cancelled");};cancel();
- if(!source||source->width<1||source->height<1||source->width>30000||source->height>30000||uint64_t(source->width)*source->height>100000000)throw std::invalid_argument("Invalid source raster");
+ if(!source||source->width<1||source->height<1||source->width>30000||source->height>30000||uint64_t(source->width)*source->height>limits::surfacePixels)throw std::invalid_argument("Invalid source raster");
  auto expectedTiles=size_t((source->width+255)/256)*size_t((source->height+255)/256);if(source->tiles.size()!=expectedTiles||std::any_of(source->tiles.begin(),source->tiles.end(),[](const auto&t){return !t;}))throw std::invalid_argument("Invalid immutable tile storage");
  if(selection&&(selection->width!=source->width||selection->height!=source->height||selection->pixels.size()!=size_t(source->width)*source->height))throw std::invalid_argument("Selection must match source pixel grid");
  if(!std::isfinite(region.originX)||!std::isfinite(region.originY)||!std::isfinite(region.unitsPerPixel)||region.unitsPerPixel<=0)throw std::invalid_argument("Invalid adjustment region");auto s=settings(parse(json));
  if(s.identity()||(selection&&std::none_of(selection->pixels.begin(),selection->pixels.end(),[](auto v){return v!=0;})))return source;
+ if(s.kind==9||s.kind==10){filters::Limits limits;limits.cancelled=cancelled;return filters::runPixels(s.kind==9?filters::Kind::GaussianBlur:filters::Kind::MotionBlur,*source,s.filter,1/region.unitsPerPixel,0,selection,limits);}
  std::vector<std::array<float,3>> colors;if(s.kind==0)colors=cube(s);std::array<float,768> lut{};if(s.kind>=1&&s.kind<=3)lut=tables(s);std::array<uint8_t,768> gradientLut{};if(s.kind==4)gradientLut=gradient(s);
  cancel();auto result=std::make_shared<Raster>(*source);bool any=false;const int columns=(source->width+255)/256;
  for(int ty=0;ty<source->height;ty+=256)for(int tx=0;tx<source->width;tx+=256){cancel();int w=std::min(256,source->width-tx),h=std::min(256,source->height-ty);size_t index=size_t(ty/256)*columns+tx/256;auto original=source->tiles[index];
@@ -79,6 +96,10 @@ std::shared_ptr<const Raster> applyAdjustment(std::shared_ptr<const Raster> sour
         graphics::applyLevels(view,lut);
     }else if(s.kind==4)graphics::gradientMap(view,gradientLut);
     else if(s.kind==5)graphics::grain(view,s.amount,s.size,s.roughness,s.seed,region.originX+tx*region.unitsPerPixel,region.originY+ty*region.unitsPerPixel,region.unitsPerPixel);
+    else if(s.kind==6)adjust_black_white(bytes.data(),size_t(w),size_t(h),256*4,s.bw.data(),s.tint,s.tintHue,s.tintSaturation/100);
+    else if(s.kind==7)adjust_color_balance(bytes.data(),size_t(w),size_t(h),256*4,s.balance.data(),s.balance.data()+3,s.balance.data()+6,s.preserveLuminosity);
+    else if(s.kind==8){for(int y=0;y<h;++y)for(int x=0;x<w;++x){auto& p=tile->pixels[size_t(y)*256+x];p.r=p.a-p.r;p.g=p.a-p.g;p.b=p.a-p.b;}}
+    else if(s.kind==11){for(int y=0;y<h;++y)for(int x=0;x<w;++x)noise_add_at(bytes.data()+(size_t(y)*256+x)*4,1,1,4,float(s.filter.amount),s.filter.gaussian,s.filter.monochromatic,s.noiseSeed,int64_t(std::floor(region.originX+(tx+x)*region.unitsPerPixel)),int64_t(std::floor(region.originY+(ty+y)*region.unitsPerPixel)));}
     else bad();
     if(selection)for(int y=0;y<h;++y)for(int x=0;x<w;++x){auto i=size_t(y)*256+x;auto mask=selection->pixels[size_t(ty+y)*source->width+tx+x];auto a=original->pixels[i],b=tile->pixels[i];auto mix=[&](uint8_t av,uint8_t bv){return uint8_t((int(av)*(255-mask)+int(bv)*mask+127)/255);};tile->pixels[i]={mix(a.r,b.r),mix(a.g,b.g),mix(a.b,b.b),mix(a.a,b.a)};}
     if(tile->pixels!=original->pixels){result->tiles[index]=tile;any=true;}

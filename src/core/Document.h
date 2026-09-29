@@ -23,8 +23,11 @@ struct Transform {
     Point toUnit(Point) const;
     bool operator==(const Transform&) const = default;
 };
-enum class Blend { Normal,Multiply,Screen,Overlay,Darken,Lighten,Difference,ColorDodge,ColorBurn,Hue,Saturation,Color,Luminosity };
-inline constexpr std::array<const char*,13> blendNames{"Normal","Multiply","Screen","Overlay","Darken","Lighten","Difference","Color Dodge","Color Burn","Hue","Saturation","Color","Luminosity"};
+enum class Blend { Normal,Multiply,Screen,Overlay,Darken,Lighten,Difference,ColorDodge,ColorBurn,Hue,Saturation,Color,Luminosity,LinearBurn,Subtract,LinearDodge,Divide,SoftLight,HardLight,VividLight,LinearLight,PinLight,HardMix,Exclusion };
+inline constexpr std::array<const char*,24> blendNames{"Normal","Multiply","Screen","Overlay","Darken","Lighten","Difference","Color Dodge","Color Burn","Hue","Saturation","Color","Luminosity","Linear Burn","Subtract","Linear Dodge (Add)","Divide","Soft Light","Hard Light","Vivid Light","Linear Light","Pin Light","Hard Mix","Exclusion"};
+
+// UI order and keyboard cycling follow the upstream Photoshop-style groups.
+inline constexpr std::array<Blend,24> blendMenuModes{Blend::Normal,Blend::Darken,Blend::Multiply,Blend::ColorBurn,Blend::LinearBurn,Blend::Lighten,Blend::Screen,Blend::ColorDodge,Blend::LinearDodge,Blend::Overlay,Blend::SoftLight,Blend::HardLight,Blend::VividLight,Blend::LinearLight,Blend::PinLight,Blend::HardMix,Blend::Difference,Blend::Exclusion,Blend::Subtract,Blend::Divide,Blend::Hue,Blend::Saturation,Blend::Color,Blend::Luminosity};
 
 // Immutable 256x256 tiles. Editing copies only touched tiles. Flattening is explicit.
 class Raster {
@@ -90,14 +93,23 @@ struct Layer {
     std::shared_ptr<const Raster> raster;
     std::optional<Mask> mask;
     // Exact serialized live metadata is retained while its editing implementation lands.
-    std::string adjustmentJson,shapeJson;
+    std::string adjustmentJson,shapeJson,textJson,effectsJson;
+    void rasterizeSource(){shapeJson.clear();textJson.clear();}
     bool operator==(const Layer&) const = default;
 };
 struct Selection {
     // optional absent means unrestricted. Present all-zero coverage means edit nothing.
     std::shared_ptr<const GrayRaster> coverage;
     std::shared_ptr<const editing::SelectionOutline> outline;
+    double feather{};
     bool operator==(const Selection&) const = default;
+};
+struct CanvasGuide {
+    enum class Axis { Horizontal,Vertical };
+    std::string id;
+    Axis axis{Axis::Horizontal};
+    double position{};
+    bool operator==(const CanvasGuide&) const = default;
 };
 struct Document {
     std::string id;
@@ -105,6 +117,7 @@ struct Document {
     double resolution{72};
     std::vector<Layer> layers; // Bottom to top.
     std::optional<Selection> selection;
+    std::vector<CanvasGuide> guides;
     bool operator==(const Document&) const = default;
 };
 // Immutable render-only source override. It is never part of Document, history,
@@ -183,6 +196,9 @@ public:
     std::optional<Snapshot> undo();
     std::optional<Snapshot> redo();
     void markSaved(){ savedRevision_=revision_; }
+    // A save owns a value snapshot and its revision. Later edits remain dirty.
+    void markSaved(uint64_t capturedRevision){ savedRevision_=capturedRevision; }
+    uint64_t currentRevision()const{return revision_;}
     void reset();
     bool modified() const {return revision_!=savedRevision_;}
     bool canUndo() const {return depth_==0&&!past_.empty();}

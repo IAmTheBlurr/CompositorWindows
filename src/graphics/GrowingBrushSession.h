@@ -1,4 +1,5 @@
 #pragma once
+#include "core/DocumentLimits.h"
 #include "BrushSession.h"
 #include <map>
 #include <memory>
@@ -54,7 +55,7 @@ class GrowingBrushSession {
 public:
     GrowingBrushSession(Layer original,BrushSessionSettings,int canvasWidth,int canvasHeight,
         std::shared_ptr<D3D11BrushCoverage> accelerator={},std::shared_ptr<const GrayRaster> documentSelection={},
-        bool targetMask=false,uint64_t remainingPixelBudget=100000000,GrowingTileCompositor compositor={});
+        bool targetMask=false,uint64_t remainingPixelBudget=limits::surfacePixels,GrowingTileCompositor compositor={},bool growsMask=false);
     ~GrowingBrushSession();
     GrowingBrushSession(const GrowingBrushSession&)=delete;
     GrowingBrushSession& operator=(const GrowingBrushSession&)=delete;

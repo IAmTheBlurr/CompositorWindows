@@ -25,10 +25,12 @@ struct ImportBatch {
     // stricter workspace guard before they can begin.
     enum class Origin { Deferred, Explicit };
     Origin origin{Origin::Deferred};
+    std::map<std::filesystem::path,std::shared_ptr<const imaging::DecodedImage>> developed;
 };
 struct ImportResult {
     ImportState before, after;
     QStringList errors;
+    QStringList conversions;
     std::vector<std::string> expandedGroups;
     size_t imported{};
     bool cancelled{};

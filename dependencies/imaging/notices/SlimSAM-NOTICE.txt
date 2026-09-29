@@ -1,0 +1,11 @@
+SlimSAM: 0.1% Data Makes Segment Anything Slim (NeurIPS 2024)
+Authors: Zigeng Chen, Gongfan Fang, Xinyin Ma, Xinchao Wang.
+https://github.com/czg1225/SlimSAM
+
+The unmodified ONNX export is by Xenova (Hugging Face).
+https://huggingface.co/Xenova/slimsam-77-uniform
+Revision: 5850ab45f587c112167512ffef949107115e26a0
+Base model: https://huggingface.co/nielsr/slimsam-77-uniform
+Apache License 2.0. See SlimSAM-LICENSE.txt.
+
+These files run locally through ONNX Runtime. Images are not uploaded.

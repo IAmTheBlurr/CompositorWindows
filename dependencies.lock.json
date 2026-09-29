@@ -3,7 +3,8 @@
     "url": "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_683/qt6_683/qt.qt6.683.win64_msvc2022_64/6.8.3-0-202503201308qtbase-Windows-Windows_11_23H2-MSVC2022-Windows-Windows_11_23H2-X86_64.7z",
     "kit": "msvc2022_64",
     "modules": [
-      "qtbase"
+      "qtbase",
+      "qtsvg"
     ],
     "sha256": "41688269FAC0565DB956C66D9EECAE777D16197E0C02CD81B88640C1F5D73D3F",
     "official_sha1": "ab0bd2551618f7128ef30c6d74fe45b6a76e2296",
@@ -16,11 +17,13 @@
     }
   },
   "schema": 1,
-  "upstream": "a19db9011282399785dc18efcfded904627bdcc2",
+  "upstream": "0ecbacfff8610b566eda059fb2644fddf337fb65",
   "toolchain": {
     "architecture": "x64",
     "windows_sdk": "10.0.26100.0",
     "cmake": "3.31.6-msvc6",
     "msvc": "14.44.35207"
-  }
+  },
+  "originalPortBaseline": "a19db9011282399785dc18efcfded904627bdcc2",
+  "architectureLookAhead": "4f11bb5f872298c6c10c7f5678408fd4a5fed11d"
 }

@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 #include "SubjectPanel.h"
 #include <QDialog>
 #include <QPointer>
@@ -8,7 +9,7 @@ namespace {
 void maskBudget(const Document& document,const Layer& original){
     uint64_t pixels=uint64_t(original.raster->width)*original.raster->height;
     for(const auto& layer:document.layers)if(layer.id!=original.id&&layer.mask&&layer.mask->raster)pixels+=uint64_t(layer.mask->raster->width)*layer.mask->raster->height;
-    if(pixels>100000000)throw std::runtime_error("The background mask exceeds the project mask budget");
+    if(pixels>limits::documentPixels())throw std::runtime_error("The background mask exceeds the project mask budget");
     if(uint64_t(original.raster->width)*original.raster->height>imaging::ImportOptions{}.maxWorkingBytes/72)throw std::runtime_error("The background mask exceeds the refinement memory budget");
 }
 unsigned selectionCoverage(const std::optional<Selection>& selection,const Transform& transform,int x,int y,int width,int height){

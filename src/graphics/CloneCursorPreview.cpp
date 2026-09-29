@@ -17,7 +17,7 @@ std::shared_ptr<const Raster> CloneCursorPreview::render(const Document& input,c
         const auto found=std::find_if(input.layers.begin(),input.layers.end(),[&](const Layer& layer){return layer.id==activeLayer;});
         if(found==input.layers.end()||!found->raster){reset();return {};}
         // Current Layer samples the asset, not that layer's appearance in stack.
-        Layer raw=*found;raw.parentId.clear();raw.maskSourceId.clear();raw.mask.reset();raw.visible=true;raw.group=false;raw.opacity=1;raw.blend=Blend::Normal;raw.adjustmentJson.clear();raw.shapeJson.clear();
+        Layer raw=*found;raw.parentId.clear();raw.maskSourceId.clear();raw.mask.reset();raw.visible=true;raw.group=false;raw.opacity=1;raw.blend=Blend::Normal;raw.adjustmentJson.clear();raw.effectsJson.clear();raw.rasterizeSource();
         source.layers={std::move(raw)};source.selection.reset();
     }
     const int side=int(std::clamp(std::ceil(diameter*zoom),1.,1024.));

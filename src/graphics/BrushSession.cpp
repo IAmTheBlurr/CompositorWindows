@@ -1,5 +1,6 @@
 // Stroke geometry/lifecycle translated from BrushStroke.swift at the pinned
 // baseline. Copyright (c) 2026 Wonder Assembly LLC. MIT: upstream/LICENSE.
+#include "core/DocumentLimits.h"
 #include "BrushSession.h"
 #include <algorithm>
 #include <cmath>
@@ -51,7 +52,7 @@ BrushSession::BrushSession(std::shared_ptr<const Raster> original,BrushSessionSe
     std::shared_ptr<D3D11BrushCoverage> accelerator,std::shared_ptr<const GrayRaster> selection,BrushSessionGeometry geometry,Output output)
     :original_(std::move(original)),published_(original_),settings_(settings),geometry_(geometry),accelerator_(std::move(accelerator)),selection_(std::move(selection)),output_(output) {
     if(!original_||original_->width<1||original_->height<1||original_->width>30000||original_->height>30000 ||
-        uint64_t(original_->width)*original_->height>100000000 ||
+        uint64_t(original_->width)*original_->height>limits::surfacePixels ||
         original_->tiles.size()!=size_t((original_->width+255)/256)*size_t((original_->height+255)/256))
         throw std::invalid_argument("Invalid original brush raster");
     for(auto& tile:original_->tiles)if(!tile)throw std::invalid_argument("Missing original brush tile");

@@ -13,7 +13,7 @@ inline bool commitPreparedLayerCopy(EditorProject& project,const std::optional<D
     std::optional<Document> document=result.document;
     auto active=result.selection.primary;
     auto selected=result.selection.ids;
-    project.history.begin("Copy Layers from Project",project.document,project.active);
+    project.history.begin(result.action.empty()?"Copy Layers from Project":result.action,project.document,project.active);
     try{
         project.document=std::move(document);
         project.active=std::move(active);

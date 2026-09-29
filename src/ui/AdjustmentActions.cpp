@@ -17,14 +17,17 @@ namespace compositor {
 void MainWindow::setupAdjustmentActions(){
     auto*menu=menuBar()->addMenu("&Adjustments");
     auto*live=menu->addMenu("New Adjustment Layer");
-    for(const QString kind:{"Hue/Saturation","Levels","Curves","Exposure","Gradient Map","Grain"}){
-        action(menu,kind+"…",{},[this,kind]{adjust(kind,false);});
-        action(live,kind+"…",{},[this,kind]{adjust(kind,true);});
+    for(const QString kind:{"Hue/Saturation","Levels","Curves","Exposure","Gradient Map","Grain","Black & White","Color Balance","Invert","Gaussian Blur","Motion Blur","Add Noise"}){
+        auto label=kind;label.replace("&","&&");
+        action(menu,label+"…",{},[this,kind]{adjust(kind,false);});
+        action(live,label+"…",{},[this,kind]{adjust(kind,true);});
     }
+    action(menu,"Layer Effects…",{},[this]{editLayerEffects();});
     action(menu,"Edit Adjustment Layer…",{},[this]{if(active()&&!active()->adjustmentJson.empty())adjust({},true,true);});
     auto*filters=menuBar()->addMenu("&Filters");
     int filterIndex=0;
-    for(const QString name:{"Gaussian Blur","Motion Blur","Add Noise","Lens Correction","Content-Aware Fill"}){int index=filterIndex++;action(filters,name+"…",{},[this,index]{runFilter(index);});}
+    for(const QString name:{"Gaussian Blur","Motion Blur","Add Noise","Lens Correction","Content-Aware Fill","Vignette","Bloom / Glow","Tonal Contrast"}){int index=filterIndex++;action(filters,name+"…",{},[this,index]{runFilter(index);});}
+    action(filters,"Camera Raw…",{},[this]{cameraRaw();});
     action(filters,"Remove Background…",{},[this]{removeBackground();});
 }
 void MainWindow::adjust(const QString&kind,bool live,bool existing){
@@ -40,6 +43,7 @@ void MainWindow::adjust(const QString&kind,bool live,bool existing){
             settings["gradientMapSettings"]=QJsonObject{{"shadows",color(foreground_)},{"highlights",color(background_)},{"reversed",false}};
         }
         if(kind=="Grain")settings["grainSettings"]=QJsonObject{{"amount",25},{"size",1.5},{"roughness",50},{"seed",double(QRandomGenerator::global()->generate())}};
+        if(kind=="Add Noise")settings["noiseSeed"]=double(QRandomGenerator::global()->generate());
         added.adjustmentJson=QJsonDocument(settings).toJson(QJsonDocument::Compact).toStdString();
         if(l)added.parentId=l->group?l->id:l->parentId;
         const auto at=std::find_if(p->document->layers.begin(),p->document->layers.end(),[&](const Layer& value){return value.id==p->active;});
@@ -53,6 +57,7 @@ void MainWindow::adjust(const QString&kind,bool live,bool existing){
     AdjustmentDialogOptions options;
     if(!live){options.initialAdjustmentJson=p->toolState.filterSettings.beginAdjustment(kind,foreground_,background_);options.onApply=[p](const std::string& json){p->toolState.filterSettings.rememberAdjustment(json);};}
     const auto title=live?QJsonDocument::fromJson(QByteArray::fromStdString(active()->adjustmentJson)).object()["kind"].toString():kind;
+    if(live&&title=="Invert"){refresh();return;}
     auto host=makeEditPanelHost(*p,before,live?"Edit "+title.toStdString()+" Adjustment":title.toStdString());
     try{editPanel_=openAdjustmentPanel(this,before,id,kind,live,existing,options,std::move(host));}
     catch(...){if(live)if(auto snapshot=p->history.cancel()){p->document=std::move(snapshot->document);p->active=std::move(snapshot->activeLayer);}throw;}

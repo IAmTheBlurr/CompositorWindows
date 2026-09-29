@@ -13,6 +13,7 @@ struct LayerCopyWork {
     std::optional<Point> point;
     QPointer<QObject> target;
     ImportState before;
+    std::vector<std::string> roots;
 };
 // Copies provider rows in order, awaiting off-thread dependency baking before
 // recording each independent destination edit. Hosts execute on the UI thread.

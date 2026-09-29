@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 #include "VisualStyle.h"
 #include "persistence/ProjectStore.h"
+#include "core/DocumentExport.h"
+#include <QPlainTextEdit>
 #include <QApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -171,6 +173,21 @@ void MainWindow::exerciseNativeUi(const QString&dir){
         auto demoFrame=canvas()->captureRendered();require(!demoFrame.isNull(),"Demo D3D readback failed");auto demoLayout=grab();
         {QPainter painter(&demoLayout);painter.drawImage(QRect(canvas()->mapTo(this,QPoint{}),canvas()->size()),demoFrame);}
         require(demoLayout.save(dir+"/demo-workspace.png"),"Demo workspace capture failed");
+    }
+    {
+        Document combined;combined.id=newId();combined.width=480;combined.height=320;
+        Layer folder;folder.id=newId();folder.name="Format 9 folder";folder.group=true;folder.opacity=.8;folder.transform={0,0,480,320};
+        Layer base;base.id=newId();base.name="Clipping base";base.parentId=folder.id;base.transform={0,0,480,320};base.raster=Raster::filled(480,320,{25,65,90,255});combined.layers={folder,base};
+        auto& project=addProject(combined,"Format 9 workflow");selectTool(Tool::Type);openTextEditor({35,45},{},editing::Rect{35,45,360,190});
+        require(textPanel_,"Text editor did not open");auto*content=textPanel_->findChild<QPlainTextEdit*>("textContent");require(content,"Text content field missing");content->setPlainText(QString::fromUtf8("Compositor Windows\nEditable paragraph"));textPanel_->findChild<QDoubleSpinBox*>("textSize")->setValue(30);QTest::qWait(120);
+        require(project.textPreview&&project.document->layers.size()==2,"Text preview changed canonical document");textPanel_->grab().save(dir+"/panel-Text.png");textPanel_->findChild<QPushButton*>("textApply")->click();QApplication::processEvents();
+        require(active()&&!active()->textJson.empty()&&project.document->layers.size()==3,"Text Apply failed");const auto textId=active()->id;
+        edit("Combined text appearance",[&](Document&d){auto*l=active();l->transform.rotation=-7;l->blend=Blend::Screen;l->maskSourceId=base.id;l->mask=Mask{std::make_shared<GrayRaster>(GrayRaster{1,1,{210}})};l->effectsJson=R"({"stroke":{"size":2,"red":0.2,"green":0.7,"blue":1,"opacity":0.8,"inside":false},"shadow":{"angle":90,"distance":8,"blur":6,"red":0,"green":0,"blue":0,"opacity":0.6},"colorOverlay":{"red":0.9,"green":0.9,"blue":1,"opacity":0.2},"innerShadow":{"angle":45,"distance":2,"blur":2,"red":0,"green":0,"blue":0,"opacity":0.2},"outerGlow":{"size":4,"red":0.2,"green":0.5,"blue":1,"opacity":0.3},"innerGlow":{"size":2,"red":1,"green":1,"blue":1,"opacity":0.3}})";d.guides={{newId(),CanvasGuide::Axis::Vertical,35},{newId(),CanvasGuide::Axis::Horizontal,45}};});
+        const auto path=dir+"/Format 9 combined.comp";ProjectStore store(makeWicProjectCodec());store.save(std::filesystem::path(path.toStdWString()),*project.document,textId);const auto prior=SoftwareRenderer().render(*project.document,0,0,480,320)->rgba();auto opened=store.load(std::filesystem::path(path.toStdWString()));
+        require(opened.readVersion==9&&opened.document.guides==project.document->guides,"Format 9 guide persistence failed");require(SoftwareRenderer().render(opened.document,0,0,480,320)->rgba()==prior,"Combined text/effect/mask reopen changed appearance");project.document=std::move(opened.document);project.active=textId;project.history.reset();refresh();
+        openTextEditor({},textId);require(textPanel_,"Reopened text is not editable");textPanel_->findChild<QPlainTextEdit*>("textContent")->appendPlainText("Edited after reopen");textPanel_->findChild<QPushButton*>("textApply")->click();QApplication::processEvents();require(project.history.canUndo()&&!active()->textJson.empty()&&!active()->effectsJson.empty()&&active()->maskSourceId==base.id,"Reediting lost supported structure");
+        store.save(std::filesystem::path(path.toStdWString()),*project.document,textId);exportDocumentAtomic(*project.document,std::filesystem::path((dir+"/format9-export.png").toStdWString()));project.history.markSaved();
+        canvas()->fit();QTest::qWait(50);auto frame=canvas()->captureRendered();require(!frame.isNull()&&frame.save(dir+"/format9-canvas.png"),"Format 9 canvas capture failed");passed("editable text with six effects, transformed mask and clipping, folder opacity, guides, format9 save/reopen/reedit/export");
     }
     QFile report(dir+"/native-ui.json");require(report.open(QIODevice::WriteOnly),"UI evidence output failed");report.write(QJsonDocument(QJsonObject{{"status","passed"},{"checks",checks},{"devicePixelRatio",devicePixelRatioF()},{"brush_full_raster_materializations",double(flattenCount)},{"human_acceptance",false},{"timestamp",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}}).toJson());for(auto&p:projects_)p->history.markSaved();
 }

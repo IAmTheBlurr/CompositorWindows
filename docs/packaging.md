@@ -4,13 +4,13 @@ Use the x64 MSI on Windows 11 to install for the current user. It needs no admin
 
 The preview is unsigned. Windows can show an unknown-publisher warning. Keep Windows security enabled and obtain the download and published SHA256 from the release page. Save projects in your own document folders. MSI repair, upgrade and uninstall operate on installer-owned files; unlisted project folders are preserved. `.comp` projects are directories, with an **Open in Compositor** folder action; the default Explorer directory action is unchanged.
 
-Automatic updates are unavailable for this preview. Install a newer MSI or extract a new portable ZIP. The MSI preserves an existing custom installation location, rejects older versions, and treats the original same-version MSI as a maintenance package. A different MSI of the same version is rejected. Close the application before maintenance. The package omits development update helpers, receipts, trust configuration and signing keys.
+Automatic updates are unavailable for this preview. Install a newer MSI or extract a new portable ZIP. The MSI preserves an existing custom installation location, rejects older versions, and treats the original same-version MSI as a maintenance package. A different MSI of the same version is rejected. Save or discard pending edits and close the application before maintenance. Never force-close an editing session for an upgrade. The package omits development update helpers, receipts, trust configuration and signing keys.
 
 To build a package, use PowerShell 7 in the Windows repository:
 
 ```powershell
 ./scripts/bootstrap-packaging.ps1
-./scripts/package.ps1 -Version 0.1.4
+./scripts/package.ps1 -Version 1.2.11
 ```
 
 Bootstrap downloads and verifies the pinned Qt corresponding source and WiX 5.0.2 compiler/UI archives. Building MSI files requires a .NET runtime (6 or later); this host uses .NET 8. Only the packaging host needs WiX/.NET. `scripts/msi/toolchain.json` records tool URLs and hashes. `-Offline` verifies cached inputs; `package.ps1` uses this mode automatically. `-PortableOnly` omits MSI generation. `-SkipBuild` packages the existing Release executable and must be used only after validating that binary against the current source.
@@ -19,7 +19,7 @@ Each run creates a new `dist/CompositorWindows-<version>-preview-<timestamp>` di
 
 The demo ZIP contains redistributable images, project folders, exported images, instructions and the backdrop generator from `demo/`. Video recordings are separate release assets. Demo media is excluded from the application-source ZIP and installed runtime. A provisional portable package can supply the validated executable for recording; the final MSI/ZIP must retain its exact executable, DLL, model and shader hashes when only release documents or demo assets change.
 
-Both downloads include application-local Qt/MSVC/codec/ONNX runtimes, the offline foreground model, shader, user guide, limitations, notices and corresponding dependency sources. The MSI is validated with the Windows Installer ICE checks; only ICE91 is suppressed because installation is intentionally per-user. WiX [package scope](https://docs.firegiant.com/wix/schema/wxs/packagescopetype/) and [UI documentation](https://docs.firegiant.com/wix/tools/wixext/wixui/) describe the installer facilities used.
+Both downloads include application-local Qt/MSVC/codec/ONNX runtimes, the offline foreground and object-selection models, shader, user guide, limitations, notices and corresponding dependency sources. The MSI is validated with the Windows Installer ICE checks; only ICE91 is suppressed because installation is intentionally per-user. WiX [package scope](https://docs.firegiant.com/wix/schema/wxs/packagescopetype/) and [UI documentation](https://docs.firegiant.com/wix/tools/wixext/wixui/) describe the installer facilities used.
 
 Run the existing deployment checks after freezing the candidate:
 

@@ -5,6 +5,8 @@
 #include "imaging/heif_codec.h"
 #include "core/DocumentExport.h"
 #include "ImportActions.h"
+#include "RawDevelopDialog.h"
+#include "imaging/raw_codec.h"
 #include "ImportCommit.h"
 #include "ProjectOpenDialog.h"
 #include "WorkspaceDropQueue.h"
@@ -18,6 +20,7 @@
 #include <QMessageBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QColorDialog>
 #include <QBuffer>
@@ -37,6 +40,7 @@
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QSettings>
+#include <QStandardItemModel>
 #include <QScopedValueRollback>
 #include <QScopeGuard>
 #include <QTabBar>
@@ -80,6 +84,7 @@ ui::ImportQueue* MainWindow::ensureImportQueue(){
         p->composite.reset();refresh();if(first&&p->document){p->canvas->setDocumentSize(p->document->width,p->document->height);p->canvas->fit();}
     };
     host.completed=[this](QObject* target,const ui::ImportResult& result){
+        if(!result.conversions.isEmpty()){auto* report=new QMessageBox(QMessageBox::Information,"Photoshop Conversion","Photoshop import completed with conversions. Review the details before saving.",QMessageBox::Ok,this);report->setObjectName("photoshopConversionReport");report->setDetailedText(result.conversions.join("\n\n"));report->setAttribute(Qt::WA_DeleteOnClose);report->setWindowModality(Qt::WindowModal);report->show();}
         if(target&&!result.errors.empty()){auto errors=target->property("imageImportErrors").toStringList();errors.append(result.errors);target->setProperty("imageImportErrors",errors);}
         if(result.cancelled)statusBar()->showMessage("Image import cancelled",5000);
         else if(result.imported)statusBar()->showMessage(QString("Imported %1 image(s)").arg(result.imported),5000);
@@ -106,6 +111,7 @@ ui::WorkspaceDropQueue* MainWindow::ensureWorkspaceDropQueue(){
         auto* target=project(canvas);if(!target)throw std::runtime_error("The drop destination was closed");
         finishOpacityEdit();cropDraft_.reset();cropDrag_.reset();if(transformSession_)applyTransformSession();
         ui::ImportBatch batch;batch.files={nativePath(path)};batch.point=point;batch.lifetime=std::move(lifetime);
+        if(imaging::RawFrame::matches(nativePath(path))){auto developed=ui::developRawImage(this,nativePath(path));if(!developed){QTimer::singleShot(0,this,[this,canvas]{if(workspaceDrops_)workspaceDrops_->imageFinished(canvas,true);});return;}batch.developed[nativePath(path)]=std::make_shared<const imaging::DecodedImage>(std::move(*developed));}
         ensureImportQueue()->enqueue(target->canvas,std::move(batch));
     };
     host.cancelImage=[this](QObject* target){if(importQueue_)importQueue_->cancel(target);};
@@ -126,7 +132,7 @@ void MainWindow::queueImageImports(const QStringList& paths,EditorProject* targe
     cropDraft_.reset();cropDrag_.reset();cropSnap_.reset();refreshCropControls();
     if(transformSession_)applyTransformSession();
     if(!target)target=&addEmptyProject();
-    ui::ImportBatch batch;batch.origin=ui::ImportBatch::Origin::Explicit;batch.point=point;for(const auto& path:paths)batch.files.push_back(nativePath(path));
+    ui::ImportBatch batch;batch.origin=ui::ImportBatch::Origin::Explicit;batch.point=point;for(const auto& path:paths){auto native=nativePath(path);if(imaging::RawFrame::matches(native)){auto developed=ui::developRawImage(this,native);if(!developed)continue;batch.developed[native]=std::make_shared<const imaging::DecodedImage>(std::move(*developed));}batch.files.push_back(native);}
     ensureImportQueue()->enqueue(target->canvas,std::move(batch));
 }
 EditorProject* MainWindow::dropDestinationAt(QPoint location,std::optional<Point>& point){
@@ -158,11 +164,11 @@ bool MainWindow::receiveLayerDrop(const QMimeData* mime,QPoint location,Qt::Keyb
     QPointer<QObject> sourceOwner=(*source)->canvas,targetOwner=destination?destination->canvas:nullptr;const bool captured=destination!=nullptr;
     auto project=[this](QObject* owner)->EditorProject*{for(auto& item:projects_)if(item->canvas==owner)return item.get();return nullptr;};
     ui::ProjectLayerCopyJob::Host host;
-    host.prepare=[this,project,sourceOwner,targetOwner,captured,point](const std::string& id)->std::optional<ui::LayerCopyWork>{
+    host.prepare=[this,project,sourceOwner,targetOwner,captured,point,ids=payload.ids](const std::string& id)->std::optional<ui::LayerCopyWork>{
         auto* sourceProject=project(sourceOwner);if(!sourceProject||!sourceProject->document)return {};
         auto* target=captured?project(targetOwner):nullptr;if(captured&&!target)return {};
         if(!target){QScopedValueRollback<bool> selecting(selectingProjectForOpen_,true);target=&addEmptyProject(false);}
-        ui::LayerCopyWork work;work.source=*sourceProject->document;work.root=id;work.point=point;work.target=target->canvas;work.before={target->document,target->active};
+        ui::LayerCopyWork work;work.source=*sourceProject->document;work.root=id;work.roots=ids;work.point=point;work.target=target->canvas;work.before={target->document,target->active};
         if(target->document)work.destination=*target->document;
         else{work.destination.id=newId();work.destination.width=work.source.width;work.destination.height=work.source.height;Layer blank;blank.id=newId();blank.name="Layer 1";blank.transform={0,0,double(work.source.width),double(work.source.height)};work.destination.layers.push_back(std::move(blank));}
         target->projectBusy=true;try{refresh(false,false);}catch(...){target->projectBusy=false;throw;}return work;
@@ -178,7 +184,7 @@ bool MainWindow::receiveLayerDrop(const QMimeData* mime,QPoint location,Qt::Keyb
     host.finished=[this,project,sourceOwner]{if(auto* owner=project(sourceOwner))owner->projectBusy=false;managingProjectOpen_=false;refresh();};
     // Construct the worker owner before publishing busy state; it starts via a
     // queued event, so failed allocation cannot leave the workspace locked.
-    new ui::ProjectLayerCopyJob(payload.ids,std::move(host),this);
+    new ui::ProjectLayerCopyJob({payload.ids.front()},std::move(host),this);
     (*source)->projectBusy=true;managingProjectOpen_=true;refresh(false,false);return true;
 }
 void MainWindow::dragEnterEvent(QDragEnterEvent*event){
@@ -281,8 +287,30 @@ void MainWindow::openPath(const QString&path){
     const bool reuse=!current()||!importQueue_||!importQueue_->contains(current()->canvas);
     auto& destination=addEmptyProject(reuse);queueImageImports({path},&destination,{});
 }
-void MainWindow::importImage(){auto* target=current();auto paths=QFileDialog::getOpenFileNames(this,"Import Images",{},"Images (*.png *.jpg *.jpeg *.tif *.tiff *.heic *.heif);;All files (*)");if(!paths.isEmpty())queueImageImports(paths,target,{});}
-bool MainWindow::saveProject(bool saveAs){cropDraft_.reset();cropDrag_.reset();if(transformSession_&&transformSession_->persistent)applyTransformSession();auto*p=current();if(!p||!p->document||p->importing||p->projectBusy)return false;auto path=p->path;if(path.isEmpty()||saveAs){path=QFileDialog::getSaveFileName(this,"Save Compositor Project",path.isEmpty()?"Untitled.comp":path,"Compositor project directory (*.comp)");if(path.isEmpty())return false;if(!path.endsWith(".comp",Qt::CaseInsensitive))path+=".comp";}ProjectStore store(makeWicProjectCodec());store.save(nativePath(path),*p->document,p->active);p->path=path;p->history.markSaved();refresh(false);return true;}
+void MainWindow::importImage(){
+    auto* target=current();
+    const bool separateTabs=canSwitchProjects();
+    QFileDialog picker(this,"Import Images",{},"Images (*.png *.jpg *.jpeg *.tif *.tiff *.heic *.heif *.svg *.psd *.psb *.dng *.cr2 *.cr3 *.nef *.nrw *.arw *.raf *.rw2 *.orf *.pef *.srw *.raw);;Photoshop (*.psd *.psb);;SVG (*.svg);;Camera RAW (*.dng *.cr2 *.cr3 *.crw *.nef *.nrw *.arw *.sr2 *.raf *.rw2 *.rwl *.orf *.pef *.srw *.3fr *.fff *.iiq *.kdc *.mos *.mrw *.x3f *.raw);;All files (*)");
+    picker.setOption(QFileDialog::DontUseNativeDialog);
+    picker.setFileMode(QFileDialog::ExistingFiles);
+    auto* mode=new QComboBox(&picker);mode->setObjectName("imageImportMode");
+    mode->addItems({"Separate tabs","Layers in current project"});
+    if(!separateTabs){
+        mode->setCurrentIndex(1);
+        auto* model=qobject_cast<QStandardItemModel*>(mode->model());model->item(0)->setEnabled(false);
+        mode->setToolTip("Apply or cancel the current edit to import into separate tabs.");
+    }
+    auto* label=new QLabel("Import as:",&picker);label->setBuddy(mode);
+    // The shared dialog chrome may already have wrapped Qt's file layout.
+    auto* layout=picker.findChild<QGridLayout*>();
+    if(!layout)throw std::runtime_error("The image picker layout is unavailable");
+    const int row=layout->rowCount();layout->addWidget(label,row,0);layout->addWidget(mode,row,1,1,layout->columnCount()-1);
+    if(picker.exec()!=QDialog::Accepted)return;
+    const auto paths=picker.selectedFiles();if(paths.isEmpty())return;
+    if(mode->currentIndex()==1)queueImageImports(paths,target,{});
+    else for(const auto& path:paths)openPath(path);
+}
+bool MainWindow::saveProject(bool saveAs){cropDraft_.reset();cropDrag_.reset();if(transformSession_&&transformSession_->persistent)applyTransformSession();auto*p=current();if(!p||!p->document||p->importing||p->projectBusy)return false;auto path=p->path;if(path.isEmpty()||saveAs){path=QFileDialog::getSaveFileName(this,"Save Compositor Project",path.isEmpty()?"Untitled.comp":path,"Compositor project directory (*.comp)");if(path.isEmpty())return false;if(!path.endsWith(".comp",Qt::CaseInsensitive))path+=".comp";}const auto revision=p->history.currentRevision();const Document snapshot=*p->document;ProjectStore store(makeWicProjectCodec());store.save(nativePath(path),snapshot,p->active);p->path=path;p->history.markSaved(revision);refresh(false);return true;}
 void MainWindow::exportImage(){
     auto*p=current();if(!p||!p->document||p->importing||p->projectBusy)return;
     imaging::validateExportExtent(uint32_t(p->document->width),uint32_t(p->document->height));

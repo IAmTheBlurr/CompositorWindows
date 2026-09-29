@@ -1,4 +1,5 @@
 #pragma once
+#include "core/DocumentLimits.h"
 // DownsampleCache.swift, a19db901, copyright Wonder Assembly LLC2026 (MIT).
 #include "core/Document.h"
 #include <memory>
@@ -7,7 +8,7 @@ struct DownsampledRaster {std::shared_ptr<const Raster> image;int level{};};
 struct DownsampledGray {std::shared_ptr<const GrayRaster> image;int level{};};
 class DownsampleCache {
 public:
-    static constexpr uint64_t pixelBudget=100000000;
+    static constexpr uint64_t pixelBudget=limits::surfacePixels;
     static constexpr int maxLevel=6;
     explicit DownsampleCache(uint64_t budget=pixelBudget);
     ~DownsampleCache();

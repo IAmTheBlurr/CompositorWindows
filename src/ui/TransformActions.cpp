@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include <QSettings>
 #include "PropertyControls.h"
 #include "editing/DocumentGeometry.h"
 #include "editing/Shapes.h"
@@ -53,7 +54,15 @@ bool MainWindow::beginTransform(Point point,Qt::KeyboardModifiers modifiers){
         if(layerSelection().ids.size()>1||(active()&&active()->group))context.groupBox=transform;
         const auto intent=editing_transform::resolvePress(context,mapping.toView(point),mapping,overlay,{modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::AltModifier),modifiers.testFlag(Qt::ControlModifier),false});
         if(!intent)return true;
-        if(intent->picked){p->active=intent->layerId;p->selected={p->active};p->maskSelected=false;}
+        if(intent->picked){
+            if(modifiers.testFlag(Qt::ControlModifier)&&modifiers.testFlag(Qt::ShiftModifier)){
+                auto selected=layerSelection().ids;const auto existing=std::find(selected.begin(),selected.end(),intent->layerId);
+                if(existing!=selected.end()&&selected.size()>1){selected.erase(existing);if(p->active==intent->layerId)p->active=selected.front();}
+                else {if(existing==selected.end())selected.push_back(intent->layerId);p->active=intent->layerId;}
+                p->selected=std::move(selected);
+            }else{p->active=intent->layerId;p->selected={p->active};}
+            p->maskSelected=false;
+        }
         if(!transformSession_&&!startTransformSession(false))return true;
         auto& state=*transformSession_;
         if(intent->mode.kind==editing_transform::ModeKind::Distort&&!state.corners)state.corners=editing_transform::corners(state.draft);
@@ -79,7 +88,7 @@ void MainWindow::updateTransform(Point point,Qt::KeyboardModifiers modifiers,boo
                 if(source==state.original.layers.end())throw std::runtime_error("The duplicate target was removed");
                 Layer copy=*source;copy.id=newId();copy.name+=" Copy";state.target=copy.id;state.ids={copy.id};state.original.layers.insert(source+1,std::move(copy));state.duplicated=true;
             }
-            auto visible=editing_transform::visiblePlacements(state.original);auto targets=editing_transform::collectSnapTargets({double(p->document->width),double(p->document->height)},visible,state.ids);
+            auto visible=editing_transform::visiblePlacements(state.original);auto targets=alignmentTargets(state.ids);
             // Windows Ctrl retains handle distortion and temporarily suppresses
             // move snapping. Source Command and Control are context-mapped here.
             auto preview=editing_transform::previewDrag(*transformDrag_,point,lockRatio_,{modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::AltModifier),modifiers.testFlag(Qt::ControlModifier),!snapping_||modifiers.testFlag(Qt::ControlModifier)},targets,canvas()->pointsPerPixel());
@@ -93,10 +102,10 @@ void MainWindow::updateTransform(Point point,Qt::KeyboardModifiers modifiers,boo
 }
 void MainWindow::setupTransformActions(){
     auto*bar=addToolBar("Transform Options");bar->setObjectName("transformOptions");
-    auto*autoSelect=new QCheckBox("Auto-select layer");autoSelect->setObjectName("transformAutoSelect");bar->addWidget(autoSelect);connect(autoSelect,&QCheckBox::toggled,this,[this](bool value){autoSelectLayers_=value;});
-    auto*controls=new QCheckBox("Show controls");controls->setObjectName("transformShowControls");controls->setChecked(true);bar->addWidget(controls);connect(controls,&QCheckBox::toggled,this,[this](bool value){transformControls_=value;refresh(false,false);});
+    auto*autoSelect=new QCheckBox("Auto-select layer");autoSelect->setObjectName("transformAutoSelect");bar->addWidget(autoSelect);connect(autoSelect,&QCheckBox::toggled,this,[this](bool value){autoSelectLayers_=value;QSettings().setValue("tool/autoSelect",value);});
+    auto*controls=new QCheckBox("Show controls");controls->setObjectName("transformShowControls");controls->setChecked(true);bar->addWidget(controls);connect(controls,&QCheckBox::toggled,this,[this](bool value){transformControls_=value;QSettings().setValue("tool/transformControls",value);refresh(false,false);});
     auto*ratio=new QCheckBox("Lock aspect ratio");ratio->setObjectName("transformLockRatio");bar->addWidget(ratio);connect(ratio,&QCheckBox::toggled,this,[this](bool v){lockRatio_=v;});
-    auto*snap=new QCheckBox("Snap to edges and centers");snap->setObjectName("transformSnapping");snap->setChecked(true);bar->addWidget(snap);connect(snap,&QCheckBox::toggled,this,[this](bool v){snapping_=v;});
+    auto*snap=new QCheckBox("Snap to edges and centers");snap->setObjectName("transformSnapping");snap->setChecked(true);bar->addWidget(snap);connect(snap,&QCheckBox::toggled,this,[this](bool v){snapping_=v;QSettings().setValue("tool/snap",v);refreshLayout();});
     auto*scale=new ui::PropertyNumber;scale->releaseFocus=[this]{if(canvas())canvas()->setFocus();};scale->setObjectName("transformScale");scale->setAccessibleName("Transform scale percent");scale->setRange(.01,100000);scale->setDecimals(2);scale->setSuffix(" %");scale->setValue(100);bar->addWidget(scale);connect(scale,&QDoubleSpinBox::valueChanged,this,[this](double value){changeTransformDraft([&](Transform& draft){draft=editing_transform::scaledPercent(draft,value,transformScalePixelSize());});});
     auto*sampling=new QComboBox;sampling->setObjectName("transformSampling");sampling->addItems({"Nearest","Smooth","High quality"});sampling->setCurrentIndex(2);sampling->setAccessibleName("Transform sampling");bar->addWidget(sampling);connect(sampling,&QComboBox::currentIndexChanged,this,[this](int i){if(i>=0&&i<=2)changeTransformDraft([&](Transform& draft){draft.sampling=Transform::Sampling(i);});});
     for(bool horizontal:{true,false}){auto*flip=bar->addAction(horizontal?"Flip H":"Flip V");flip->setObjectName(horizontal?"transformFlipH":"transformFlipV");bindCommand(flip,"Transform Options",horizontal?"Flip H":"Flip V",[this,horizontal]{changeTransformDraft([&](Transform& draft){draft=editing_transform::flippedLocal(draft,horizontal);});});}

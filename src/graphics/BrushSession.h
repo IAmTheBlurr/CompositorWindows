@@ -9,6 +9,7 @@ struct BrushSessionSettings {
     double radius{20},hardness{1},opacity{1};
     std::array<uint8_t,3> color{0,0,0}; // straight sRGB, opaque paint color
     bool erase{};
+    double smoothing{};
 };
 struct BrushSessionGeometry {
     double a{1},b{},c{},d{1},tx{},ty{}; // source pixel edge to document pixel edge

@@ -1,6 +1,7 @@
 // Sparse growth and immediate immutable paint snapshots from BrushStroke.swift
 // and EditorSession+Brush.swift at a19db9011282399785dc18efcfded904627bdcc2.
 // Copyright (c) 2026 Wonder Assembly LLC. MIT notice: upstream/LICENSE.
+#include "core/DocumentLimits.h"
 #include "GrowingBrushSession.h"
 #include "RasterSampling.h"
 #include "SamplingSource.h"
@@ -29,12 +30,12 @@ struct GrowingBrushSnapshot::Impl {
     Transform base;
     BrushSourceRect extent,crop;
     int baseWidth{},baseHeight{},phaseX{},phaseY{};
-    bool mask{},changed{};
+    bool mask{},changed{},growsMask{};uint8_t maskBackground{255};
     PaintedMap tiles;
     std::shared_ptr<Counters> counters;
     Point alignment()const{if(mask){const auto& gray=*original.mask->raster;return gray.width==baseWidth&&gray.height==baseHeight?Point{double(gray.samplingOriginX),double(gray.samplingOriginY)}:Point{};}return original.raster?Point{double(original.raster->samplingOriginX),double(original.raster->samplingOriginY)}:Point{};}
     Pixel basePixel(int x,int y)const{
-        if(x<0||y<0||x>=baseWidth||y>=baseHeight)return {};
+        if(x<0||y<0||x>=baseWidth||y>=baseHeight)return mask&&growsMask?Pixel{maskBackground,maskBackground,maskBackground,255}:Pixel{};
         if(mask){const auto& gray=*original.mask->raster;auto value=gray.pixel(int((x+.5)*gray.width/baseWidth),int((y+.5)*gray.height/baseHeight));return {value,value,value,255};}
         return original.raster?original.raster->pixel(x,y):Pixel{};
     }
@@ -46,7 +47,7 @@ struct GrowingBrushSnapshot::Impl {
     // Original immutable pixels only: a previous painted tile must never become
     // the blend input. This row is bounded by the caller's 256-pixel tile.
     void copyBaseRow(int x,int y,int count,Pixel* destination)const{
-        std::fill_n(destination,count,Pixel{});
+        std::fill_n(destination,count,mask&&growsMask?Pixel{maskBackground,maskBackground,maskBackground,255}:Pixel{});
         if(y<0||y>=baseHeight)return;
         if(mask){
             if(!directBaseRows()){for(int i=0;i<count;++i)destination[i]=basePixel(x+i,y);return;}
@@ -83,17 +84,17 @@ struct GrowingBrushSnapshot::Impl {
     Transform place(BrushSourceRect rect)const{auto result=base;result.width=base.width*rect.width/baseWidth;result.height=base.height*rect.height/baseHeight;auto center=base.fromUnit({(rect.x+rect.width/2.)/baseWidth,(rect.y+rect.height/2.)/baseHeight});result.x=center.x-result.width/2;result.y=center.y-result.height/2;if(!result.valid())throw std::runtime_error("Growing brush produced invalid layer geometry");return result;}
     Transform placed()const{return changed?place(crop):base;}
     uint8_t maskExterior()const{
-        if(!original.mask->placement||original.group||!original.adjustmentJson.empty())return 0;
-        const double factor=std::min(1.,96./std::max(baseWidth,baseHeight));int w=std::max(1,int(baseWidth*factor)),h=std::max(1,int(baseHeight*factor));uint64_t sum=0,count=0;
-        for(int y=0;y<h;++y)for(int x=0;x<w;++x){if(y!=0&&y!=h-1&&x!=0&&x!=w-1)continue;double x0=double(x)*baseWidth/w,x1=double(x+1)*baseWidth/w,y0=double(y)*baseHeight/h,y1=double(y+1)*baseHeight/h,value=0;for(int yy=int(std::floor(y0));yy<int(std::ceil(y1));++yy)for(int xx=int(std::floor(x0));xx<int(std::ceil(x1));++xx)value+=pixel(xx,yy).r*(std::min(x1,double(xx+1))-std::max(x0,double(xx)))*(std::min(y1,double(yy+1))-std::max(y0,double(yy)));sum+=uint64_t(std::clamp(std::lround(value/((x1-x0)*(y1-y0))),0L,255L));++count;}
+        if((!original.mask->placement&&crop==BrushSourceRect{0,0,baseWidth,baseHeight})||original.group||!original.adjustmentJson.empty())return 0;
+        const double factor=std::min(1.,96./std::max(crop.width,crop.height));int w=std::max(1,int(crop.width*factor)),h=std::max(1,int(crop.height*factor));uint64_t sum=0,count=0;
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x){if(y!=0&&y!=h-1&&x!=0&&x!=w-1)continue;double x0=crop.x+double(x)*crop.width/w,x1=crop.x+double(x+1)*crop.width/w,y0=crop.y+double(y)*crop.height/h,y1=crop.y+double(y+1)*crop.height/h,value=0;for(int yy=int(std::floor(y0));yy<int(std::ceil(y1));++yy)for(int xx=int(std::floor(x0));xx<int(std::ceil(x1));++xx)value+=pixel(xx,yy).r*(std::min(x1,double(xx+1))-std::max(x0,double(xx)))*(std::min(y1,double(yy+1))-std::max(y0,double(yy)));sum+=uint64_t(std::clamp(std::lround(value/((x1-x0)*(y1-y0))),0L,255L));++count;}
         return sum*2>=count*255?255:0;
     }
     std::shared_ptr<const Raster> materialize(BrushSourceRect rect)const{
-        budget(rect,100000000);auto out=std::make_shared<Raster>(*Raster::filled(rect.width,rect.height));int columns=(rect.width+255)/256;const auto gridOrigin=alignment();out->samplingOriginX=int(gridOrigin.x)-rect.x;out->samplingOriginY=int(gridOrigin.y)-rect.y;
+        budget(rect,limits::surfacePixels);auto out=std::make_shared<Raster>(*Raster::filled(rect.width,rect.height));int columns=(rect.width+255)/256;const auto gridOrigin=alignment();out->samplingOriginX=int(gridOrigin.x)-rect.x;out->samplingOriginY=int(gridOrigin.y)-rect.y;
         for(size_t index=0;index<out->tiles.size();++index){int x=int(index%columns)*256+rect.x,y=int(index/columns)*256+rect.y,w=std::min(256,rect.x+rect.width-x),h=std::min(256,rect.y+rect.height-y);auto k=key(x,y);auto at=origin(k);auto overlay=tiles.find(k);
             if(overlay!=tiles.end()&&at.x==x&&at.y==y){out->tiles[index]=overlay->second.pixels;++counters->reused;continue;}
             if(!mask&&original.raster&&x>=0&&y>=0&&x+w<=baseWidth&&y+h<=baseHeight&&x%256==0&&y%256==0&&!hasOverlay({x,y,w,h})){out->tiles[index]=original.raster->tiles[size_t(y/256)*((baseWidth+255)/256)+x/256];++counters->reused;continue;}
-            if(!hasOverlay({x,y,w,h})&&(!mask&&!original.raster||x>=baseWidth||y>=baseHeight||x+w<=0||y+h<=0))continue;
+            if(!mask&&!hasOverlay({x,y,w,h})&&(!original.raster||x>=baseWidth||y>=baseHeight||x+w<=0||y+h<=0))continue;
             auto tile=std::make_shared<Raster::Tile>();for(int row=0;row<h;++row)copyRow(x,y+row,w,tile->pixels.data()+size_t(row)*256);out->tiles[index]=std::move(tile);++counters->materialized;
         }return out;
     }
@@ -125,7 +126,7 @@ std::shared_ptr<const LayerRenderPreview> GrowingBrushSnapshot::renderPreview()c
         auto prior=previous?std::static_pointer_cast<const Impl>(previous->identity):std::shared_ptr<const Impl>{};
         // A placed mask's exterior depends on its edge majority, so a stroke
         // there can change coverage arbitrarily far outside the painted pixels.
-        if(state->mask&&state->original.mask->placement)return {};
+        if(state->mask&&(state->original.mask->placement||state->crop!=BrushSourceRect{0,0,state->baseWidth,state->baseHeight}))return {};
         std::set<BrushTileKey> keys;for(const auto& [key,tile]:state->tiles){(void)tile;keys.insert(key);}if(prior)for(const auto& [key,tile]:prior->tiles){(void)tile;keys.insert(key);}
         std::vector<LayerRenderPreview::Damage> regions;
         auto add=[&](double left,double top,double right,double bottom){LayerRenderPreview::Damage region{INFINITY,INFINITY,-INFINITY,-INFINITY};for(Point point:std::array<Point,4>{{{left-1,top-1},{right+1,top-1},{left-1,bottom+1},{right+1,bottom+1}}}){const auto mapped=state->base.fromUnit({point.x/state->baseWidth,point.y/state->baseHeight});region.left=std::min(region.left,mapped.x);region.top=std::min(region.top,mapped.y);region.right=std::max(region.right,mapped.x);region.bottom=std::max(region.bottom,mapped.y);}regions.push_back(region);};
@@ -145,11 +146,12 @@ std::shared_ptr<const LayerRenderPreview> GrowingBrushSnapshot::renderPreview()c
     if(state->mask){
         // A committed mask uses this full source grid, including uniform-mask
         // expansion. Keep its original placement and let the stack supply units.
+        if(preview->layer.mask->placement||bounds!=BrushSourceRect{0,0,state->baseWidth,state->baseHeight})preview->layer.mask->placement=state->placed();
         if(preview->layer.mask->placement)preview->layer.mask->previewExterior=state->maskExterior();
         preview->mask=[state,bounds](Point unit,Transform::Sampling sampling,uint8_t exterior){return sampleMaskPixels(bounds.width,bounds.height,[&](int x,int y){return state->pixel(bounds.x+x,bounds.y+y).r;},unit,sampling,exterior);};
         auto source=rawSource();source->gray=[state,bounds](int x,int y){return state->pixel(bounds.x+x,bounds.y+y).r;};source->readRow=readRow;preview->maskSource=std::move(source);
     }else{
-        preview->layer.transform=state->placed();preview->layer.shapeJson.clear();
+        preview->layer.transform=state->placed();preview->layer.rasterizeSource();
         // The image handle marks a visible image for graph/culling validation;
         // all reads are overridden below. Blank virtual canvases allocate one tile.
         if(!preview->layer.raster)preview->layer.raster=Raster::filled(1,1);
@@ -163,24 +165,24 @@ std::shared_ptr<const LayerRenderPreview> GrowingBrushSnapshot::renderPreview()c
     return preview;
 }
 Layer GrowingBrushSnapshot::previewLayer(double x,double y,double width,double height,uint64_t maxPixels)const{
-    if(!validPoint({x,y})||!validPoint({x+width,y+height})||!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0||maxPixels<1||maxPixels>100000000)throw std::invalid_argument("Invalid growing brush viewport");
+    if(!validPoint({x,y})||!validPoint({x+width,y+height})||!std::isfinite(width)||!std::isfinite(height)||width<=0||height<=0||maxPixels<1||maxPixels>limits::surfacePixels)throw std::invalid_argument("Invalid growing brush viewport");
     if(!impl_->changed)return impl_->original;
     double left=INFINITY,top=INFINITY,right=-INFINITY,bottom=-INFINITY;for(auto p:std::array<Point,4>{{{x,y},{x+width,y},{x,y+height},{x+width,y+height}}}){auto u=impl_->base.toUnit(p);left=std::min(left,u.x*impl_->baseWidth);right=std::max(right,u.x*impl_->baseWidth);top=std::min(top,u.y*impl_->baseHeight);bottom=std::max(bottom,u.y*impl_->baseHeight);}
     left=std::floor(left)-2;top=std::floor(top)-2;right=std::ceil(right)+2;bottom=std::ceil(bottom)+2;
     left=std::max(left,double(impl_->crop.x));top=std::max(top,double(impl_->crop.y));right=std::min(right,double(impl_->crop.x+impl_->crop.width));bottom=std::min(bottom,double(impl_->crop.y+impl_->crop.height));
-    Layer layer=impl_->original;if(!impl_->mask)layer.shapeJson.clear();
+    Layer layer=impl_->original;if(!impl_->mask)layer.rasterizeSource();
     if(left>=right||top>=bottom){if(impl_->mask){const auto exterior=impl_->maskExterior();layer.mask->raster=std::make_shared<GrayRaster>(GrayRaster{1,1,{exterior}});layer.mask->previewExterior=exterior;}else layer.raster.reset();return layer;}
     if(std::abs(left)>1e9||std::abs(top)>1e9||std::abs(right)>1e9||std::abs(bottom)>1e9||right-left>1e9||bottom-top>1e9)throw std::runtime_error("Growing brush viewport source extent too large");
     BrushSourceRect rect{int(left),int(top),int(right-left),int(bottom-top)};auto placement=impl_->place(rect);uint64_t step=1;auto pixels=[&](){return ((uint64_t(rect.width)+step-1)/step)*((uint64_t(rect.height)+step-1)/step);};while(pixels()>maxPixels||(uint64_t(rect.width)+step-1)/step>30000||(uint64_t(rect.height)+step-1)/step>30000)step*=2;
     const int w=int((uint64_t(rect.width)+step-1)/step),h=int((uint64_t(rect.height)+step-1)/step);auto sourcePoint=[&](int px,int py){return Point{rect.x+(px+.5)*rect.width/w,rect.y+(py+.5)*rect.height/h};};
-    if(impl_->mask){const uint8_t exterior=impl_->maskExterior();auto mask=std::make_shared<GrayRaster>(GrayRaster{w,h,std::vector<uint8_t>(size_t(w)*h)});for(int py=0;py<h;++py)for(int px=0;px<w;++px){auto p=sourcePoint(px,py);mask->pixels[size_t(py)*w+px]=impl_->pixel(int(p.x),int(p.y)).r;}layer.mask->raster=std::move(mask);layer.mask->placement=placement;layer.mask->previewExterior=exterior;if(layer.group||!layer.adjustmentJson.empty()){layer.transform=placement;layer.mask->placement.reset();}return layer;}
+    if(impl_->mask){const uint8_t exterior=impl_->maskExterior();auto mask=std::make_shared<GrayRaster>(GrayRaster{w,h,std::vector<uint8_t>(size_t(w)*h)});for(int py=0;py<h;++py)for(int px=0;px<w;++px){auto p=sourcePoint(px,py);mask->pixels[size_t(py)*w+px]=impl_->pixel(int(p.x),int(p.y)).r;}layer.mask->raster=std::move(mask);layer.mask->placement=placement;layer.mask->previewExterior=exterior;return layer;}
     layer.transform=placement;if(step==1)layer.raster=impl_->materialize(rect);else{auto raster=std::make_shared<Raster>(*Raster::filled(w,h));int columns=(w+255)/256;for(size_t index=0;index<raster->tiles.size();++index){auto tile=std::make_shared<Raster::Tile>();int tx=int(index%columns)*256,ty=int(index/columns)*256;for(int row=0;row<std::min(256,h-ty);++row)for(int col=0;col<std::min(256,w-tx);++col){auto p=sourcePoint(tx+col,ty+row);tile->pixels[size_t(row)*256+col]=impl_->pixel(int(std::floor(p.x)),int(std::floor(p.y)));}raster->tiles[index]=std::move(tile);++impl_->counters->materialized;}layer.raster=std::move(raster);}
     if(layer.mask&&!layer.mask->placement){const auto& original=*layer.mask->raster;auto mask=std::make_shared<GrayRaster>(GrayRaster{w,h,std::vector<uint8_t>(size_t(w)*h,255)});for(int py=0;py<h;++py)for(int px=0;px<w;++px){auto p=sourcePoint(px,py);if(p.x>=0&&p.y>=0&&p.x<impl_->baseWidth&&p.y<impl_->baseHeight)mask->pixels[size_t(py)*w+px]=original.pixel(int(p.x*original.width/impl_->baseWidth),int(p.y*original.height/impl_->baseHeight));}layer.mask->raster=std::move(mask);}return layer;
 }
 Layer GrowingBrushSnapshot::materializeLayer()const{
-    auto layer=impl_->original;if(layer.mask)layer.mask->previewExterior.reset();if(!impl_->changed)return layer;auto bounds=impl_->crop;budget(bounds,100000000);
-    if(impl_->mask){auto gray=std::make_shared<GrayRaster>();gray->width=bounds.width;gray->height=bounds.height;const auto origin=impl_->alignment();gray->samplingOriginX=int(origin.x)-bounds.x;gray->samplingOriginY=int(origin.y)-bounds.y;gray->pixels.resize(size_t(gray->width)*gray->height);for(int y=0;y<gray->height;++y)for(int x=0;x<gray->width;++x)gray->pixels[size_t(y)*gray->width+x]=impl_->pixel(bounds.x+x,bounds.y+y).r;layer.mask->raster=std::move(gray);return layer;}
-    layer.raster=impl_->materialize(bounds);layer.transform=impl_->placed();layer.shapeJson.clear();
+    auto layer=impl_->original;if(layer.mask)layer.mask->previewExterior.reset();if(!impl_->changed)return layer;auto bounds=impl_->crop;budget(bounds,limits::surfacePixels);
+    if(impl_->mask){auto gray=std::make_shared<GrayRaster>();gray->width=bounds.width;gray->height=bounds.height;const auto origin=impl_->alignment();gray->samplingOriginX=int(origin.x)-bounds.x;gray->samplingOriginY=int(origin.y)-bounds.y;gray->pixels.resize(size_t(gray->width)*gray->height);for(int y=0;y<gray->height;++y)for(int x=0;x<gray->width;++x)gray->pixels[size_t(y)*gray->width+x]=impl_->pixel(bounds.x+x,bounds.y+y).r;layer.mask->raster=std::move(gray);if(layer.mask->placement||bounds!=BrushSourceRect{0,0,impl_->baseWidth,impl_->baseHeight})layer.mask->placement=impl_->placed();return layer;}
+    layer.raster=impl_->materialize(bounds);layer.transform=impl_->placed();layer.rasterizeSource();
     if(layer.mask&&!layer.mask->placement&&bounds!=BrushSourceRect{0,0,impl_->baseWidth,impl_->baseHeight}){const auto& original=*layer.mask->raster;auto mask=std::make_shared<GrayRaster>();mask->width=bounds.width;mask->height=bounds.height;mask->samplingOriginX=(original.width==impl_->baseWidth?original.samplingOriginX:0)-bounds.x;mask->samplingOriginY=(original.height==impl_->baseHeight?original.samplingOriginY:0)-bounds.y;mask->pixels.assign(size_t(mask->width)*mask->height,255);for(int y=0;y<mask->height;++y)for(int x=0;x<mask->width;++x){int sx=bounds.x+x,sy=bounds.y+y;if(sx>=0&&sy>=0&&sx<impl_->baseWidth&&sy<impl_->baseHeight)mask->pixels[size_t(y)*mask->width+x]=original.pixel(int((sx+.5)*original.width/impl_->baseWidth),int((sy+.5)*original.height/impl_->baseHeight));}layer.mask->raster=std::move(mask);}
     return layer;
 }
@@ -200,18 +202,19 @@ struct GrowingBrushSession::Impl {
     bool begun{},finished{},emptySelection{};
     std::string error;
     GrowingTileCompositor compositor;
-    Impl(Layer layer,BrushSessionSettings value,int cw,int ch,std::shared_ptr<D3D11BrushCoverage> gpu,std::shared_ptr<const GrayRaster> selected,bool mask,uint64_t pixelBudget,GrowingTileCompositor compose):settings(value),accelerator(std::move(gpu)),selection(std::move(selected)),limit(pixelBudget),compositor(std::move(compose)){
-        if(!layer.transform.valid()||cw<1||ch<1||cw>30000||ch>30000||pixelBudget<1||pixelBudget>100000000||(!mask&&(layer.group||!layer.adjustmentJson.empty()))||mask&&(!layer.mask||!layer.mask->raster))throw std::invalid_argument("Invalid growing brush target");
+    Impl(Layer layer,BrushSessionSettings value,int cw,int ch,std::shared_ptr<D3D11BrushCoverage> gpu,std::shared_ptr<const GrayRaster> selected,bool mask,uint64_t pixelBudget,GrowingTileCompositor compose,bool growsMask):settings(value),accelerator(std::move(gpu)),selection(std::move(selected)),limit(std::min(pixelBudget,limits::surfacePixels)),compositor(std::move(compose)){
+        if(!layer.transform.valid()||cw<1||ch<1||cw>30000||ch>30000||pixelBudget<1||pixelBudget>limits::documentPixels()||(!mask&&(layer.group||!layer.adjustmentJson.empty()))||mask&&(!layer.mask||!layer.mask->raster))throw std::invalid_argument("Invalid growing brush target");
         if(!std::isfinite(value.radius)||value.radius<.5||value.radius>(compositor?1002:1000)||!std::isfinite(value.hardness)||value.hardness<0||value.hardness>1||!std::isfinite(value.opacity)||value.opacity<.01||value.opacity>1)throw std::invalid_argument("Invalid growing brush settings");
-        auto initial=std::make_shared<GrowingBrushSnapshot::Impl>();initial->original=std::move(layer);initial->mask=mask;initial->counters=std::make_shared<Counters>();initial->base=mask?initial->original.mask->placement.value_or(initial->original.transform):initial->original.transform;
+        auto initial=std::make_shared<GrowingBrushSnapshot::Impl>();initial->original=std::move(layer);initial->mask=mask;initial->growsMask=growsMask;initial->counters=std::make_shared<Counters>();initial->base=mask?initial->original.mask->placement.value_or(initial->original.transform):initial->original.transform;
         auto original=initial->original.raster;bool placed=mask&&initial->original.mask->placement.has_value();initial->baseWidth=placed?initial->original.mask->raster->width:original?original->width:int(std::round(initial->original.transform.width));initial->baseHeight=placed?initial->original.mask->raster->height:original?original->height:int(std::round(initial->original.transform.height));
+        if(placed&&initial->original.mask->raster->width<=2&&initial->original.mask->raster->height<=2){initial->baseWidth=std::max(1,int(std::round(initial->base.width)));initial->baseHeight=std::max(1,int(std::round(initial->base.height)));}
         int w=initial->baseWidth,h=initial->baseHeight;if(w<1||h<1||w>30000||h>30000)throw std::invalid_argument("Invalid growing brush source grid");
         // A mask edit budgets its own grid. The unchanged image remains subject
         // to the general raster limit, not the caller's remaining mask budget.
-        if(original){budget({0,0,original->width,original->height},mask?100000000:pixelBudget);if(original->tiles.size()!=size_t((original->width+255)/256)*((original->height+255)/256)||std::any_of(original->tiles.begin(),original->tiles.end(),[](const auto& tile){return !tile;}))throw std::invalid_argument("Invalid brush source tiles");}
-        if(mask){auto gray=initial->original.mask->raster;if(gray->width<1||gray->height<1||gray->pixels.size()!=size_t(gray->width)*gray->height)throw std::invalid_argument("Invalid brush mask");settings.erase=false;settings.color={value.color[0],value.color[0],value.color[0]};}
+        if(original){budget({0,0,original->width,original->height},mask?limits::surfacePixels:pixelBudget);if(original->tiles.size()!=size_t((original->width+255)/256)*((original->height+255)/256)||std::any_of(original->tiles.begin(),original->tiles.end(),[](const auto& tile){return !tile;}))throw std::invalid_argument("Invalid brush source tiles");}
+        if(mask){if(growsMask)initial->maskBackground=cachedMaskBackground(initial->original.mask->raster);auto gray=initial->original.mask->raster;if(gray->width<1||gray->height<1||gray->pixels.size()!=size_t(gray->width)*gray->height)throw std::invalid_argument("Invalid brush mask");settings.erase=false;settings.color={value.color[0],value.color[0],value.color[0]};}
         mapping=BrushSessionGeometry::forLayer(initial->base,w,h,cw,ch);auto extent=BrushSourceRect{0,0,w,h};
-        if(!mask){double l=0,t=0,r=w,b=h;for(auto p:std::array<Point,4>{{{0,0},{double(cw),0},{0,double(ch)},{double(cw),double(ch)}}}){auto u=initial->base.toUnit(p);l=std::min(l,std::floor(u.x*w));t=std::min(t,std::floor(u.y*h));r=std::max(r,std::ceil(u.x*w));b=std::max(b,std::ceil(u.y*h));}if(r-l>1e9||b-t>1e9||std::abs(l)>1e9||std::abs(t)>1e9)throw std::runtime_error("Growing brush virtual extent exceeds source limit");extent={int(l),int(t),int(r-l),int(b-t)};}
+        if(!mask||growsMask){double l=0,t=0,r=w,b=h;for(auto p:std::array<Point,4>{{{0,0},{double(cw),0},{0,double(ch)},{double(cw),double(ch)}}}){auto u=initial->base.toUnit(p);l=std::min(l,std::floor(u.x*w));t=std::min(t,std::floor(u.y*h));r=std::max(r,std::ceil(u.x*w));b=std::max(b,std::ceil(u.y*h));}if(r-l>1e9||b-t>1e9||std::abs(l)>1e9||std::abs(t)>1e9)throw std::runtime_error("Growing brush virtual extent exceeds source limit");extent={int(l),int(t),int(r-l),int(b-t)};}
         initial->extent=extent;initial->phaseX=extent.x-floorDiv(extent.x,256)*256;initial->phaseY=extent.y-floorDiv(extent.y,256)*256;initial->crop={0,0,w,h};
         if(selection){if(selection->width!=cw||selection->height!=ch||!selection->validStorage())throw std::invalid_argument("Brush selection must use document coordinates");emptySelection=!selection->hasCoverage();}
         state=std::move(initial);published=std::shared_ptr<const GrowingBrushSnapshot>(new GrowingBrushSnapshot(state));originalSnapshot=published;
@@ -234,7 +237,7 @@ struct GrowingBrushSession::Impl {
     void finishBounds(GrowingBrushSnapshot::Impl& next,std::optional<BrushSourceRect> nextAllocated)const{
         next.changed=!next.tiles.empty();BrushSourceRect bounds=next.mask||next.original.raster?BrushSourceRect{0,0,next.baseWidth,next.baseHeight}:BrushSourceRect{};
         if(!next.mask)for(const auto& [key,tile]:next.tiles){(void)key;bounds=unite(bounds,tile.alpha);}
-        next.crop=bounds.empty()?nextAllocated.value_or(BrushSourceRect{0,0,next.baseWidth,next.baseHeight}):bounds;budget(next.crop,limit);next.placed();
+        next.crop=next.mask?nextAllocated.value_or(BrushSourceRect{0,0,next.baseWidth,next.baseHeight}):bounds.empty()?nextAllocated.value_or(BrushSourceRect{0,0,next.baseWidth,next.baseHeight}):bounds;budget(next.crop,limit);next.placed();
     }
     std::set<BrushTileKey> affected(std::span<const BrushSegment> segments)const{
         std::set<BrushTileKey> result;double det=mapping.a*mapping.d-mapping.b*mapping.c,reach=settings.radius+2;auto inverse=[&](double x,double y){x-=mapping.tx;y-=mapping.ty;return Point{(mapping.d*x-mapping.c*y)/det,(-mapping.b*x+mapping.a*y)/det};};const auto extent=state->extent;
@@ -282,13 +285,13 @@ struct GrowingBrushSession::Impl {
                 if(differs)next->tiles[item.key]={std::move(output),r>l?BrushSourceRect{item.x+l,item.y+t,r-l,b-t}:BrushSourceRect{}};else next->tiles.erase(item.key);pixelsChanged=true;
             }
         }
-        if(pixelsChanged){next->changed=!next->tiles.empty();BrushSourceRect bounds=next->mask||next->original.raster?BrushSourceRect{0,0,next->baseWidth,next->baseHeight}:BrushSourceRect{};if(!next->mask)for(const auto& [key,tile]:next->tiles){(void)key;bounds=unite(bounds,tile.alpha);}next->crop=bounds.empty()?nextAllocated.value_or(BrushSourceRect{0,0,next->baseWidth,next->baseHeight}):bounds;budget(next->crop,limit);next->placed();}
+        if(pixelsChanged){next->changed=!next->tiles.empty();BrushSourceRect bounds=next->mask||next->original.raster?BrushSourceRect{0,0,next->baseWidth,next->baseHeight}:BrushSourceRect{};if(!next->mask)for(const auto& [key,tile]:next->tiles){(void)key;bounds=unite(bounds,tile.alpha);}next->crop=next->mask?nextAllocated.value_or(BrushSourceRect{0,0,next->baseWidth,next->baseHeight}):bounds.empty()?nextAllocated.value_or(BrushSourceRect{0,0,next->baseWidth,next->baseHeight}):bounds;budget(next->crop,limit);next->placed();}
         coverage.swap(nextCoverage);tailKeys.swap(nextTail);allocated=nextAllocated;metrics.coverage.settledSegments+=settled.size();metrics.coverage.touchedTiles=coverage.size();metrics.coverage.coverageStorageBytes=0;for(const auto& [key,tile]:coverage){(void)key;metrics.coverage.coverageStorageBytes+=tile->permanent.size()*sizeof(float)+tile->preview.size();}
         if(pixelsChanged){state=std::move(next);published=std::shared_ptr<const GrowingBrushSnapshot>(new GrowingBrushSnapshot(state));++metrics.snapshots;++metrics.coverage.publishedSnapshots;}
         metrics.coverage.tileCompositionMilliseconds+=std::chrono::duration<double,std::milli>(Clock::now()-covered).count();
     }
 };
-GrowingBrushSession::GrowingBrushSession(Layer layer,BrushSessionSettings settings,int cw,int ch,std::shared_ptr<D3D11BrushCoverage> accelerator,std::shared_ptr<const GrayRaster> selection,bool mask,uint64_t budget,GrowingTileCompositor compositor):impl_(std::make_unique<Impl>(std::move(layer),settings,cw,ch,std::move(accelerator),std::move(selection),mask,budget,std::move(compositor))){}
+GrowingBrushSession::GrowingBrushSession(Layer layer,BrushSessionSettings settings,int cw,int ch,std::shared_ptr<D3D11BrushCoverage> accelerator,std::shared_ptr<const GrayRaster> selection,bool mask,uint64_t budget,GrowingTileCompositor compositor,bool growsMask):impl_(std::make_unique<Impl>(std::move(layer),settings,cw,ch,std::move(accelerator),std::move(selection),mask,budget,std::move(compositor),growsMask)){}
 GrowingBrushSession::~GrowingBrushSession()=default;
 bool GrowingBrushSession::begin(Point point){if(impl_->begun||impl_->finished)throw std::logic_error("Growing stroke already started");if(!validPoint(point)||impl_->emptySelection)return false;impl_->begun=true;try{return append(point);}catch(...){impl_->begun=false;throw;}}
 bool GrowingBrushSession::append(Point point){if(!impl_->begun||impl_->finished)throw std::logic_error("Growing stroke is not active");if(!validPoint(point)||!impl_->samples.empty()&&impl_->samples.back()==point)return false;auto next=impl_->samples;next.push_back(point);if(next.size()>4)next.erase(next.begin());size_t n=next.size();std::vector<BrushSegment> settled,tail;if(n==1)settled.push_back(segment(point,point));else if(n>=3)settled=brushContinuousCurve(next[n-3],next[n-2],next[n>=4?n-4:0],point);if(n>=2)tail.push_back(segment(next[n-2],point));impl_->render(settled,tail);impl_->samples.swap(next);++impl_->metrics.coverage.acceptedSamples;return true;}

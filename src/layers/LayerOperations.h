@@ -6,7 +6,7 @@
 
 namespace compositor::layers {
 struct SelectionState {std::vector<std::string> ids;std::string primary;};
-struct EditResult {Document document;SelectionState selection;bool changed{};std::string action;};
+struct EditResult {Document document;SelectionState selection;bool changed{};std::string action;std::unordered_map<std::string,std::string> copiedIds;};
 struct Entry {std::string id;int depth{};bool visible{};};
 struct Placement {std::string parent,above;bool atBottom{};};
 struct Limits {std::uint64_t maxWorkingBytes{1200000000};std::function<bool()> cancelled;};
@@ -22,12 +22,15 @@ bool canMoveSibling(const Document&,const std::string&,int offset);
 EditResult moveSibling(const Document&,SelectionState,int offset);
 // This legacy list operation moves flat top-first offsets, as EditorSession does.
 EditResult reorderTopFirst(const Document&,SelectionState,std::vector<std::size_t> offsets,std::size_t destination);
-// Active/option-drag duplication rejects folders, shares immutable rasters/masks.
+// Whole-layer duplication shares immutable sources and remaps folder contents.
 EditResult duplicateLayer(const Document&,SelectionState,const std::string&,std::optional<Placement> drop={});
+std::vector<std::string> copiedLayerRoots(const Document&,SelectionState);
+EditResult duplicateLayers(const Document&,SelectionState,std::string action="Duplicate Layer");
 struct CopyResult {EditResult edit;std::unordered_map<std::string,std::string> ids;};
 // Cross-project copy carries a folder subtree, remaps IDs, and bakes dependencies
 // outside the copy. Point defaults to destination canvas center.
 CopyResult copySubtree(const Document& source,const std::string& id,const Document& destination,std::optional<Point> point={},const Limits& = {});
+CopyResult copyLayers(const Document& source,const std::vector<std::string>& ids,const Document& destination,std::optional<Point> point={},const Limits& = {});
 bool canLink(const Document&,const std::string& source,const std::string& target);
 bool canToggleClipping(const Document&,const std::string&);
 EditResult link(const Document&,SelectionState,const std::string& source,const std::string& target);

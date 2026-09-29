@@ -71,7 +71,8 @@ void testPreviewAndFailure(){
     q.selection.reset();q.limits.maxWorkingBytes=1;fails([&]{apply(q);},"working budget must fail");q.limits={};q.limits.cancelled=[]{return true;};fails([&]{apply(q);},"pre-cancel must fail");int polls=0;q.source=Raster::filled(80,60,{255,255,255,255});q.transform={0,0,80,60};q.limits.cancelled=[&]{return ++polls>8;};fails([&]{apply(q);},"in-flight Gaussian cancellation must fail");require(polls>8&&q.source->pixel(0,0).a==255,"cancel preserves input");
     q.limits={};q.kind=Kind(999);fails([&]{apply(q);},"unknown filter must fail");q.kind=Kind::AddNoise;auto malformed=std::make_shared<GrayRaster>();malformed->width=1;malformed->height=1;q.selection=SourceSelection{malformed};fails([&]{apply(q);},"malformed coverage must fail");
 }
-int sourceParity(){
+// Frozen a19db901 FilterTests assertions retained for historical reproduction.
+int historicalGaussianSourceConflict(){
     auto q=request(Kind::GaussianBlur,image(40,20,[](int x,int){return x<20?Pixel{255,255,255,255}:Pixel{};}));q.settings.radius=3;auto result=apply(q);
     // FilterTests.swift:28 indexes the raw committed buffer. When trimming
     // makes width < 39, x=38 crosses into the next row rather than sampling
@@ -80,6 +81,24 @@ int sourceParity(){
     std::cout<<"upstream FilterTests.swift:29-31 source Gaussian border assertions: alpha(0)="<<alpha(0)<<" expected255; alpha(20)="<<alpha(20)<<" expected20..235; alpha(38)="<<alpha(38)<<" expected0; grid="<<result.raster->width<<"x"<<result.raster->height<<"\n";
     bool passed=alpha(0)==255&&alpha(20)>20&&alpha(20)<235&&alpha(38)==0;
     std::cout<<(passed?"PASS":"FAIL")<<" source Gaussian raster assertions; upstream grow/unclamped/trim behavior conflicts with border assertion. Mac reference execution remains required.\n";return passed?0:1;
+}
+// Compositor v1.2.11, CompositorTests/FilterTests.swift:7-46.
+// The target corrected its old border assertions to test grown, trimmed bounds
+// and the middle-row alpha profile. This is a source contract, not a Mac raster comparison.
+int sourceGaussianContract(){
+    auto q=request(Kind::GaussianBlur,image(40,20,[](int x,int){return x<20?Pixel{255,255,255,255}:Pixel{};}));
+    q.transform={0,0,40,20};q.settings.radius=3;const auto result=apply(q);
+    std::vector<int> middle;for(int x=0;x<result.raster->width;++x)middle.push_back(result.raster->pixel(x,result.raster->height/2).a);
+    const auto peak=*std::max_element(middle.begin(),middle.end());
+    const bool soft=std::any_of(middle.begin(),middle.end(),[](int value){return value>20&&value<235;});
+    std::cout<<"v1.2.11 FilterTests Gaussian contract: origin="<<result.transform.x<<","<<result.transform.y<<" grid="<<result.raster->width<<"x"<<result.raster->height<<" middle_peak="<<peak<<" soft_edge="<<soft<<" last="<<middle.back()<<"\n";
+    require(result.transform.x<0&&result.transform.y<0,"Gaussian blur must grow past both original edges");
+    require(result.raster->height>20,"Gaussian blur must spread vertically outside original layer");
+    require(result.raster->width<40,"Gaussian blur must trim the untouched transparent half");
+    require(peak>=250,"Gaussian blur must retain the opaque block interior");
+    require(soft,"Gaussian blur must soften the original hard edge");
+    require(middle.back()<20,"Gaussian blur must fade out on the far side");
+    std::cout<<"PASS v1.2.11 Gaussian source contract\n";return 0;
 }
 int benchmark(){
     auto source=image(512,512,[](int x,int y){return Pixel{std::uint8_t(x%256),std::uint8_t(y%256),128,255};});
@@ -90,5 +109,5 @@ int benchmark(){
     }return 0;
 }
 }
-int main(int argc,char** argv){try{if(argc==2&&std::string(argv[1])=="--source-parity")return sourceParity();if(argc==2&&std::string(argv[1])=="--benchmark")return benchmark();testSettings();testMotion();testNoise();testLens();testFill();testCoverageAndPlacement();testPreviewAndFailure();std::cout<<"PASS filters: source settings, motion geometry, exact C noise/lens, fill, selection, immutable placement, preview, budgets, cancellation\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<"\n";return 1;}}
+int main(int argc,char** argv){try{if(argc==2&&std::string(argv[1])=="--source-parity")return historicalGaussianSourceConflict();if(argc==2&&std::string(argv[1])=="--source-contract")return sourceGaussianContract();if(argc==2&&std::string(argv[1])=="--benchmark")return benchmark();testSettings();testMotion();testNoise();testLens();testFill();testCoverageAndPlacement();testPreviewAndFailure();std::cout<<"PASS filters: source settings, motion geometry, exact C noise/lens, fill, selection, immutable placement, preview, budgets, cancellation\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<"\n";return 1;}}
 

@@ -18,6 +18,8 @@ layers::SelectionState MainWindow::layerSelection()const{
 }
 void MainWindow::applyLayerEdit(layers::EditResult result){
     if(!result.changed)return;edit(result.action.c_str(),[&](Document&d){d=std::move(result.document);current()->active=result.selection.primary;current()->selected=result.selection.ids;});
+    for(const auto&[original,copy]:result.copiedIds)if(current()->collapsedGroups.contains(original))current()->collapsedGroups.insert(copy);
+    if(!result.copiedIds.empty())refresh(false);
 }
 void MainWindow::newBlankLayer(){
     if(!canEditLayers())return;
@@ -51,7 +53,7 @@ void MainWindow::layerCommand(int command){
         case 0:applyLayerEdit(layers::addGroup(d,selection));break;
         case 1:applyLayerEdit(layers::group(d,selection));break;
         case 2:applyLayerEdit(layers::moveOut(d,selection));break;
-        case 3:applyLayerEdit(layers::duplicateLayer(d,selection,p->active));break;
+        case 3:applyLayerEdit(layers::duplicateLayers(d,selection));break;
         case 4:applyLayerEdit(layers::moveSibling(d,selection,1));break;
         case 5:applyLayerEdit(layers::moveSibling(d,selection,-1));break;
         case 6:{auto plan=layers::deletionPlan(d,selection);auto mode=layers::DeleteMode::Bake;
@@ -72,7 +74,7 @@ void MainWindow::layerCommand(int command){
             const bool first=!target->document;Document destination;
             if(target->document)destination=*target->document;
             else{destination.id=newId();destination.width=d.width;destination.height=d.height;Layer blank;blank.id=newId();blank.name="Layer 1";blank.transform={0,0,double(d.width),double(d.height)};destination.layers.push_back(blank);}
-            auto result=layers::copySubtree(d,p->active,destination);
+            auto result=layers::copyLayers(d,layers::copiedLayerRoots(d,selection),destination);
             ui::commitPreparedLayerCopy(*target,target->document,target->active,result.edit);
             for(int i=0;i<int(projects_.size());++i)if(projects_[i].get()==target)tabs_->setCurrentIndex(i);refresh();if(first)target->canvas->fit();break;
         }
@@ -129,7 +131,7 @@ void MainWindow::setupLayerActions(){
             }catch(const std::exception& error){statusBar()->showMessage(QString::fromUtf8(error.what()));}
         });
     });
-    connect(layers_,&QTreeWidget::itemDoubleClicked,this,[this](QTreeWidgetItem*item,int column){if(!item||column!=0)return;const auto id=item->data(0,Qt::UserRole).toString().toStdString();selectLayerTarget(id,false);if(active()&&!active()->adjustmentJson.empty())adjust({},true,true);else if(auto* current=layers_->currentItem())layers_->editItem(current,0);});
+    connect(layers_,&QTreeWidget::itemDoubleClicked,this,[this](QTreeWidgetItem*item,int column){if(!item||(column!=0&&column!=1))return;const auto id=item->data(0,Qt::UserRole).toString().toStdString();selectLayerTarget(id,false);if(active()&&!active()->textJson.empty())openTextEditor({},active()->id);else if(active()&&!active()->adjustmentJson.empty())adjust({},true,true);else if(column==0)if(auto* current=layers_->currentItem())layers_->editItem(current,0);});
     auto*masks=menu->addMenu("Mask");masks->setObjectName("layerMaskMenu");
     struct Entry{const char* text;const char* name;ui::MaskCommand command;};
     for(const auto& entry:std::vector<Entry>{{"Add White Mask (Hide Selection)","maskAddReveal",ui::MaskCommand::AddReveal},{"Add Black Mask (Reveal Selection)","maskAddHide",ui::MaskCommand::AddHide},{"Reveal All","maskRevealAll",ui::MaskCommand::RevealAll},{"Hide All","maskHideAll",ui::MaskCommand::HideAll},{"Enable / Disable Mask","maskToggleEnabled",ui::MaskCommand::ToggleEnabled},{"Link / Unlink Mask","maskToggleLink",ui::MaskCommand::ToggleLink},{"Delete Mask","maskDelete",ui::MaskCommand::Delete},{"Edit Image","maskEditImage",ui::MaskCommand::EditImage},{"Edit Mask","maskEditMask",ui::MaskCommand::EditMask},{"Select Image Alpha","maskLoadAlpha",ui::MaskCommand::LoadAlpha},{"Select Mask Black Areas","maskLoadBlack",ui::MaskCommand::LoadBlack}}){auto*a=action(masks,entry.text,{},[this,command=entry.command]{maskCommand(int(command));});a->setObjectName(entry.name);a->setProperty("maskCommand",int(entry.command));}

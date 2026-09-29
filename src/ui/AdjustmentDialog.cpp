@@ -105,7 +105,7 @@ PreviewResult makePreview(Document doc,std::string active,const std::string&json
             if(found==doc.layers.end()||!found->raster)throw std::runtime_error("Select an image layer");
             if(!full)found->raster=adjustmentPreviewSource(found->raster,json,cancelled);
             auto selection=editing::mappedCoverage(doc,found->transform,found->raster->width,found->raster->height);
-            auto changed=effects::applyAdjustment(found->raster,json,selection.get(),{},cancelled);if(changed!=found->raster){found->raster=changed;found->shapeJson.clear();}
+            auto changed=effects::applyAdjustment(found->raster,json,selection.get(),{},cancelled);if(changed!=found->raster){found->raster=changed;found->rasterizeSource();}
         }
         check();validateDocument(doc);
         result.image=fittedDocumentPreview(showPreview?doc:before,{600,460});
@@ -170,6 +170,8 @@ class AdjustmentPanel final:public ui::EditPanelSession {
     if(kind=="Exposure"&&!settings.contains("exposureSettings"))settings["exposureSettings"]=Object{{"exposure",0},{"offset",0},{"gamma",1}};
     if(kind=="Gradient Map"&&!settings.contains("gradientMapSettings"))settings["gradientMapSettings"]=Object{{"shadows",Object{{"red",0},{"green",0},{"blue",0}}},{"highlights",Object{{"red",1},{"green",1},{"blue",1}}},{"reversed",false}};
     if(kind=="Grain"&&!settings.contains("grainSettings"))settings["grainSettings"]=Object{{"amount",25},{"size",1.5},{"roughness",50},{"seed",0}};
+    if(kind=="Black & White"&&!settings.contains("blackWhiteSettings"))settings["blackWhiteSettings"]=QJsonDocument::fromJson(QByteArray::fromStdString(effects::defaultAdjustmentJson("Black & White"))).object()["blackWhiteSettings"];
+    if(kind=="Color Balance"&&!settings.contains("colorBalanceSettings"))settings["colorBalanceSettings"]=QJsonDocument::fromJson(QByteArray::fromStdString(effects::defaultAdjustmentJson("Color Balance"))).object()["colorBalanceSettings"];
     dialog.mayReject=[this]{return !committing_;};dialog.setObjectName("adjustmentDialog");dialog.setWindowTitle(kind);dialog.resize(840,560);
     layout.addWidget(&fields);
     preview.documentWidth=original.width;preview.documentHeight=original.height;preview.setMinimumSize(400,300);preview.setAlignment(Qt::AlignCenter);rightLayout.addWidget(&preview,1);status.setWordWrap(true);rightLayout.addWidget(&status);
@@ -182,7 +184,7 @@ class AdjustmentPanel final:public ui::EditPanelSession {
     auto number=[&](const QString&label,double value,double lo,double hi,int decimals,std::function<void(double)>setter){
         const int stepDecimals=kind=="Grain"?(label=="Size"?1:0):kind=="Hue/Saturation"?0:kind=="Levels"&&label!="Gamma"?0:decimals;
         auto*spin=new ui::PropertyNumber;spin->setSingleStep(std::pow(10.,-stepDecimals));spin->setRange(lo,hi);spin->setDecimals(decimals);spin->setValue(value);spin->setAccessibleName(label);
-        if(kind=="Exposure"||kind=="Grain"||kind=="Hue/Saturation"){
+        if(kind=="Exposure"||kind=="Grain"||kind=="Hue/Saturation"||kind=="Black & White"||kind=="Color Balance"||kind=="Gaussian Blur"||kind=="Motion Blur"||kind=="Add Noise"){
             auto* row=new QWidget;auto* rowLayout=new QHBoxLayout(row);rowLayout->setContentsMargins(0,0,0,0);auto* slider=new ui::TrackSlider(Qt::Horizontal);slider->setRange(0,10000);slider->setAccessibleName(label+" slider");
             const bool logarithmic=label=="Gamma"||label=="Size";const double first=logarithmic?std::log(lo):lo,last=logarithmic?std::log(hi):hi;
             auto position=[first,last,logarithmic](double v){return int(std::lround(((logarithmic?std::log(v):v)-first)/(last-first)*10000));};
@@ -197,7 +199,19 @@ class AdjustmentPanel final:public ui::EditPanelSession {
         QObject::connect(spin,&QDoubleSpinBox::valueChanged,&dialog,[&,setter](double v){if(loadingSettings_)return;setter(v);changed();});return spin;};
     auto flag=[&](const QString&label,bool value,std::function<void(bool)>setter){auto*box=new QCheckBox(label);box->setChecked(value);form.addRow(box);QObject::connect(box,&QCheckBox::toggled,&dialog,[&,setter](bool v){if(loadingSettings_)return;setter(v);changed();});return box;};
     auto property=[&](const QString&group,const QString&key,const QString&label,double fallback,double lo,double hi,int decimals){auto* spin=number(label,settings[group].toObject().value(key).toDouble(fallback),lo,hi,decimals,[&,group,key](double v){auto o=settings[group].toObject();o[key]=v;settings[group]=o;});reloadControls.push_back([this,spin,group,key,fallback]{spin->setValue(settings[group].toObject().value(key).toDouble(fallback));});return spin;};
-    if(kind=="Exposure"){
+    if(kind=="Black & White"){
+        const QStringList keys{"reds","yellows","greens","cyans","blues","magentas"},labels{"Reds","Yellows","Greens","Cyans","Blues","Magentas"};const double defaults[]{40,60,40,60,20,80};for(int i=0;i<6;++i)property("blackWhiteSettings",keys[i],labels[i],defaults[i],-200,300,0);
+        flag("Tint",settings["blackWhiteSettings"].toObject()["tint"].toBool(),[&](bool value){auto o=settings["blackWhiteSettings"].toObject();o["tint"]=value;settings["blackWhiteSettings"]=o;});property("blackWhiteSettings","tintHue","Tint Hue",40,0,360,0);property("blackWhiteSettings","tintSaturation","Tint Saturation",20,0,100,0);
+    }else if(kind=="Color Balance"){
+        const QStringList keys{"shadowCyanRed","shadowMagentaGreen","shadowYellowBlue","midCyanRed","midMagentaGreen","midYellowBlue","highlightCyanRed","highlightMagentaGreen","highlightYellowBlue"},labels{"Shadows: Cyan / Red","Shadows: Magenta / Green","Shadows: Yellow / Blue","Midtones: Cyan / Red","Midtones: Magenta / Green","Midtones: Yellow / Blue","Highlights: Cyan / Red","Highlights: Magenta / Green","Highlights: Yellow / Blue"};for(int i=0;i<9;++i)property("colorBalanceSettings",keys[i],labels[i],0,-100,100,0);
+        flag("Preserve Luminosity",settings["colorBalanceSettings"].toObject()["preserveLuminosity"].toBool(true),[&](bool value){auto o=settings["colorBalanceSettings"].toObject();o["preserveLuminosity"]=value;settings["colorBalanceSettings"]=o;});
+    }else if(kind=="Gaussian Blur"||kind=="Motion Blur"||kind=="Add Noise"){
+        auto scalar=[&](const QString& key,const QString& label,double fallback,double lo,double hi){number(label,settings.value(key).toDouble(fallback),lo,hi,1,[&,key](double value){settings[key]=value;});};
+        if(kind=="Gaussian Blur")scalar("blurRadius","Radius",10,.1,250);
+        else if(kind=="Motion Blur"){scalar("motionAngle","Angle",0,-90,90);scalar("motionDistance","Distance",10,1,2000);}
+        else{scalar("noiseAmount","Amount",10,.1,400);flag("Gaussian",settings["noiseGaussian"].toBool(),[&](bool value){settings["noiseGaussian"]=value;});flag("Monochromatic",settings["noiseMonochromatic"].toBool(),[&](bool value){settings["noiseMonochromatic"]=value;});}
+    }else if(kind=="Invert"){form.addRow(new QLabel("Invert the colors while preserving transparency."));
+    }else if(kind=="Exposure"){
         property("exposureSettings","exposure","Exposure",0,-20,20,2);property("exposureSettings","offset","Offset",0,-.5,.5,4);property("exposureSettings","gamma","Gamma",1,.01,9.99,2);
     }else if(kind=="Grain"){
         property("grainSettings","amount","Amount",25,0,100,1);property("grainSettings","size","Size",1.5,.5,20,2);property("grainSettings","roughness","Roughness",50,0,100,1);

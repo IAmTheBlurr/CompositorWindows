@@ -44,10 +44,10 @@ int main(){
         near(rotate.updated({99,45},true,{true}).rotation,15,"Rotation15degree quantization");
         rotate.original.rotation=720;near(rotate.updated({50,75},false).rotation,810,"Rotation turn continuity");
     });
-    test("resize_crossing_clamps_one_without_implicit_flip",[]{
+    test("resize_crossing_flips_and_preserves_anchor",[]{
         auto original=value(0,0,100,50,0);t::Drag drag{original,{100,50},{t::ModeKind::Resize,4},{}};
-        const auto crossed=drag.updated({-100,-100},false);near(crossed.width,1,"Crossed width clamp");near(crossed.height,1,"Crossed height clamp");require(!crossed.flipX&&!crossed.flipY,"Crossing flipped image");
-        near(t::outlinePoint(crossed,{0,0}),{0,0},"Crossing moved anchor");
+        const auto crossed=drag.updated({-100,-100},false);near(crossed.width,100,"Crossed width magnitude");near(crossed.height,100,"Crossed height magnitude");require(crossed.flipX&&crossed.flipY,"Crossing must flip both axes");
+        near(crossed.fromUnit({0,0}),{0,0},"Crossing moved image anchor");
     });
     test("whole_rounding_away_from_zero_and_fractional_typed_fields",[]{
         auto original=value(-1.5,2.5,100.4,50.6,-14.5);auto rounded=t::roundedTransform(original);
@@ -130,8 +130,8 @@ int main(){
         auto corner=*drag.movedCorners({20,10},true);near(corner[0],{20,0},"Corner Shift axis");near(corner[1],c[1],"Corner changed neighbor");
         drag.mode={t::ModeKind::Distort,7};auto edge=*drag.movedCorners({-10,20});near(edge[3],{-10,100},"Edge start");near(edge[0],{-10,20},"Edge wrap endpoint");near(edge[1],c[1],"Edge changed opposite");
         drag.mode={t::ModeKind::Move};auto moved=*drag.movedCorners({3,4});for(size_t i=0;i<4;++i)near(moved[i],plus(c[i],{3,4}),"Distorted body move");
-        require(t::usableCorners(c),"Valid corners refused");auto bow=c;std::swap(bow[1],bow[2]);require(!t::usableCorners(bow),"Bow tie accepted");
-        drag.mode={t::ModeKind::Distort,0};auto invalid=t::previewDrag(drag,{200,200},false,{}, {},1);require(!invalid.accepted,"Host must retain last valid distortion");
+        require(t::usableCorners(c),"Valid corners refused");auto bow=c;std::swap(bow[1],bow[2]);require(t::usableCorners(bow)&&!t::convexCorners(bow),"Folded shape must use triangular mapping");
+        drag.mode={t::ModeKind::Distort,0};auto folded=t::previewDrag(drag,{200,200},false,{}, {},1);require(folded.accepted,"Folded corners retain two usable triangles");auto invalid=t::previewDrag(drag,{100,0},false,{}, {},1);require(!invalid.accepted,"Collapsed triangle must retain previous distortion");
         auto g=t::OverlayGeometry::fromCorners(c,{2,{10,20}});require(!g.showsRotation&&g.rotationHandle==g.handles[1],"Distortion shows rotate handle");near(g.handles[7],{10,100},"Distortion midpoint");
     });
     test("group_following_exact_move_uniform_rotation_and_flips",[]{

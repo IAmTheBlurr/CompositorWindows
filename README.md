@@ -2,7 +2,7 @@
 
 A native Windows 11 port of **Compositor**, the image editor created by **[Robbie Tilton](https://robbietilton.com/compositor)**.
 
-Layers, masks, selections, painting, adjustments, filters, and offline background removal, with an interface closely informed by the original Mac app. Windows window controls are the default; an optional Mac-style title bar is available in **View → Appearance**.
+Editable text, shapes, 24 blend modes, six layer effects, RAW development, layered Photoshop import, masks, selections, painting, adjustments, filters, and offline object selection/background removal, with an interface closely informed by the original Mac app. Windows window controls are the default; an optional Mac-style title bar is available in **View → Appearance**.
 
 ![Compositor on Windows, editing the After the wind demonstration](docs/images/editor.png)
 
@@ -30,7 +30,7 @@ This Windows port was developed from Robbie Tilton's original Mac source. Its co
 
 The intent is to stay in step with Robbie's Compositor: its core tools, editing behavior, design, and project format. Windows improvements and thoughtful enhancements are welcome when they fit that foundation.
 
-**The current port is based on Mac Compositor 1.0.4**, at [`a19db90`](https://github.com/robbietilton/Compositor/tree/a19db9011282399785dc18efcfded904627bdcc2). Newer Mac releases exist; the Windows port has not caught up with them. Windows preview numbers currently use `0.1.x`. Shared upstream version numbering and automated update handling are future work; they are not active synchronization today.
+**This independent Windows preview targets Compositor 1.2.11**, at [`0ecbacf`](https://github.com/robbietilton/Compositor/tree/0ecbacfff8610b566eda059fb2644fddf337fb65). The original port baseline remains 1.0.4 (`a19db90`). Version 1.3–1.3.5 features, public release preparation, and production updates belong to the next integration range. Shared version numbering identifies the targeted feature contract; it does not establish identical Mac rendering or verified reciprocal exchange.
 
 ## Have at it
 

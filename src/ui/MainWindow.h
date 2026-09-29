@@ -10,6 +10,7 @@
 #include "editing/PixelEdits.h"
 #include "editing/GradientPreview.h"
 #include "editing/Shapes.h"
+#include "editing/Text.h"
 #include "editing/DocumentGeometry.h"
 #include "retouch/RetouchSession.h"
 #include "editing_transform/TransformSessionState.h"
@@ -32,6 +33,7 @@
 #include <memory>
 #include <unordered_set>
 class QMimeData;
+class QDialog;
 
 namespace compositor {
 namespace ui {class ImportQueue;class WorkspaceDropQueue;class LayerOpacityField;class PaletteSwatches;}
@@ -52,6 +54,7 @@ struct EditorProject {
     std::shared_ptr<const editing::GradientPreview> gradientPreview;
     std::optional<std::pair<std::string,Blend>> blendPreview;
     std::shared_ptr<const Document> effectPreview;
+    std::shared_ptr<const Document> textPreview;
     std::string brushLayerId;
     QString path;
     QString defaultTitle{"Untitled"};
@@ -112,6 +115,10 @@ class MainWindow final:public QMainWindow {
     QColor background_{Qt::white};
     editing::GradientSettings gradientSettings_;
     editing::ShapeStyle shapeStyle_;
+    editing::TextStyle textStyle_;
+    QPointer<QDialog> textPanel_;
+    std::optional<Point> textPress_;
+    std::string textHitId_;
     std::optional<Layer> drawingOriginal_;
     EditorProject* gradientOwner_{};
     Point gradientStart_,gradientEnd_;
@@ -120,6 +127,7 @@ class MainWindow final:public QMainWindow {
     std::string shapeDraftId_;
     editing::ShapeStyle shapeDraftStyle_;
     std::optional<editing::Rect> shapeDraftRect_;
+    std::optional<Point> shapeLineEnd_;
     std::optional<editing::Rect> cropDraft_;
     QString cropRatioChoice_{"Free"};
     editing::LassoKind lassoKind_{editing::LassoKind::Freehand};
@@ -145,6 +153,7 @@ class MainWindow final:public QMainWindow {
     EditorProject* opacityOwner_{};
     bool strokeMask_{},maskPaintWhite_{};
     std::optional<Point> lastBrushPoint_;
+    std::optional<Point> smoothBrushAnchor_;
     std::string lastBrushLayer_;
     bool lastBrushMask_{};
     std::unique_ptr<graphics::GrowingBrushSession> stroke_;
@@ -166,6 +175,11 @@ class MainWindow final:public QMainWindow {
     Layer* active();
     bool canEditLayers();
     bool canEditAppearance();
+    bool canEditOpacity();
+    void setupLayoutActions();
+    void refreshLayout();
+    editing_transform::SnapTargets alignmentTargets(std::span<const std::string> excluded={},bool centers=true);
+    void trimImage();
     void captureToolState(EditorProject&)const;
     void restoreToolState(const EditorProject&);
     void initializeProject(EditorProject&);
@@ -257,8 +271,12 @@ class MainWindow final:public QMainWindow {
     void cancelEditPanel();
     void adjust(const QString& kind,bool live,bool existing=false);
     void removeBackground();
+    void editLayerEffects();
     void runFilter(int);
     void setupSelectionActions();
+    bool objectSelection_{};
+    int objectEdgeOffset_{};
+    void selectSubjectOrObject(std::optional<Point>,Qt::KeyboardModifiers = Qt::NoModifier);
     void runWand(Point,Qt::KeyboardModifiers,std::optional<editing::SelectionMode> modeOverride={});
     int wandTolerance_{32},wandSampleRadius_{};
     bool wandContiguous_{true},wandAllLayers_{};
@@ -277,6 +295,8 @@ class MainWindow final:public QMainWindow {
     void copySelection(bool merged,bool cut=false,bool viaLayer=false);
     void addPixelLayer(std::shared_ptr<const Raster>,Point,const char*);
     void pasteSelection();
+    bool copyWholeLayers();
+    bool pasteWholeLayers();
     void pixelEdit(int operation);
     void setupLayerActions();
     void newBlankLayer();
@@ -300,6 +320,12 @@ class MainWindow final:public QMainWindow {
     bool beginTransform(Point,Qt::KeyboardModifiers);
     void updateTransform(Point,Qt::KeyboardModifiers,bool finish);
     void setupDrawingActions();
+    void cameraRaw();
+    void setupTextActions();
+    bool beginText(Point,Qt::KeyboardModifiers);
+    bool updateText(Point,Qt::KeyboardModifiers,bool finish);
+    void openTextEditor(Point,const std::string& id={},std::optional<editing::Rect> box={});
+    void cancelText();
     void beginGradient(Point);
     void updateGradient(Point,Qt::KeyboardModifiers,bool);
     void refreshGradient();

@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "core/DocumentLimits.h"
 #include "DocumentPreview.h"
 #include "EditPanelSession.h"
 #include "PropertyControls.h"
@@ -8,6 +9,7 @@
 #include "filters/PixelFilters.h"
 #include "editing/Selection.h"
 #include <QDialog>
+#include <QColorDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -34,7 +36,7 @@ std::optional<filters::SourceSelection> filterSelection(const Document&doc,const
         for(Point p:std::array<Point,4>{{{box.x,box.y},{box.x+box.width,box.y},{box.x+box.width,box.y+box.height},{box.x,box.y+box.height}}}){auto u=layer.transform.toUnit(p);x0=std::min(x0,u.x*rect.width);x1=std::max(x1,u.x*rect.width);y0=std::min(y0,u.y*rect.height);y1=std::max(y1,u.y*rect.height);}
         if(!box.empty()){rect={int(std::floor(x0)),int(std::floor(y0)),int(std::ceil(x1)-std::floor(x0)),int(std::ceil(y1)-std::floor(y0))};}
     }
-    if(rect.width<1||rect.height<1||rect.width>30000||rect.height>30000||uint64_t(rect.width)*rect.height>100000000)throw std::runtime_error("Selection exceeds source allocation limits");
+    if(rect.width<1||rect.height<1||rect.width>30000||rect.height>30000||uint64_t(rect.width)*rect.height>limits::surfacePixels)throw std::runtime_error("Selection exceeds source allocation limits");
     auto mapping=filters::placedGrid(layer.transform,layer.raster->width,layer.raster->height,rect);
     return filters::SourceSelection{editing::mappedCoverage(doc,mapping,rect.width,rect.height),rect.x,rect.y};
 }
@@ -66,7 +68,7 @@ Layer carryFilterMask(const Layer& original,Layer layer,const filters::Request& 
     if(mask.placement||!mask.raster||(mask.raster->width==1&&mask.raster->height==1))return layer;
     const auto width=layer.raster->width,height=layer.raster->height;
     const auto pixels=uint64_t(width)*height;
-    if(width<1||height<1||width>30000||height>30000||pixels>100000000||pixels>job.limits.maxWorkingBytes)
+    if(width<1||height<1||width>30000||height>30000||pixels>limits::surfacePixels||pixels>job.limits.maxWorkingBytes)
         throw std::runtime_error("The expanded filter mask exceeds its allocation budget");
     auto grown=std::make_shared<GrayRaster>();grown->width=width;grown->height=height;grown->pixels.resize(size_t(pixels));
     const auto exterior=graphics::maskBackground(*mask.raster);
@@ -85,7 +87,7 @@ Layer carryFilterMask(const Layer& original,Layer layer,const filters::Request& 
 }
 Layer filteredLayer(const Layer& original,const filters::Request& job){
     auto result=filters::apply(job);auto layer=original;
-    layer.raster=result.raster;layer.transform=result.transform;if(result.changed)layer.shapeJson.clear();
+    layer.raster=result.raster;layer.transform=result.transform;if(result.changed)layer.rasterizeSource();
     return carryFilterMask(original,std::move(layer),job,result.changed);
 }
 struct FilterOutput {std::optional<Document> document;QImage thumbnail;QString error;bool full{};};
@@ -137,13 +139,14 @@ class FilterPanel final:public ui::EditPanelSession {
         }));
     }
     void finish(int answer){
-        if(closed_)return;closed_=true;cancelled_->store(true);debounce_.stop();positions()[request_.kind]=dialog_.pos();
+        if(closed_)return;if(host_.closeColor)host_.closeColor(answer==QDialog::Accepted);closed_=true;cancelled_->store(true);debounce_.stop();positions()[request_.kind]=dialog_.pos();
         try{if(answer==QDialog::Accepted&&committed_&&host_.commit){
             auto found=std::find_if(committed_->layers.begin(),committed_->layers.end(),[this](const Layer& layer){return layer.id==original_.id;});
             if(found==committed_->layers.end())throw std::runtime_error("Completed filter target is missing");
             auto job=request_;job.preview=false;job.limits.cancelled={};
             auto merge=[rendered=*found,original=original_,job](const Layer& current){
-                auto layer=current;layer.raster=rendered.raster;layer.transform=rendered.transform;layer.shapeJson=rendered.shapeJson;
+                auto layer=current;layer.raster=rendered.raster;layer.transform=rendered.transform;layer.shapeJson=rendered.shapeJson;layer.textJson=rendered.textJson;
+                if(job.vignetteFillsClear&&!current.raster){if(layer.mask&&!layer.mask->placement)layer.mask->placement=current.transform;return layer;}
                 if(current.mask==original.mask&&current.transform==original.transform){layer.mask=rendered.mask;return layer;}
                 return carryFilterMask(current,std::move(layer),job,rendered.raster!=original.raster||rendered.transform!=original.transform);
             };
@@ -164,7 +167,7 @@ public:
         auto number=[this](const QString& label,double& value,double low,double high,int decimals){
             auto* spin=new ui::PropertyNumber;spin->setRange(low,high);spin->setDecimals(decimals);const int stepDecimals=label=="Radius"||label=="Amount"?1:0;spin->setSingleStep(std::pow(10.,-stepDecimals));spin->setValue(value);spin->setAccessibleName(label);auto* row=new QWidget;auto* layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);
             auto* slider=new ui::TrackSlider(Qt::Horizontal);slider->setRange(0,10000);slider->setAccessibleName(label+" slider");
-            const bool logarithmic=label=="Radius"||label=="Distance"||label=="Amount";
+            const bool logarithmic=low>0&&(label=="Radius"||label=="Distance"||label=="Amount");
             const double first=logarithmic?std::log(low):low,last=logarithmic?std::log(high):high;
             auto position=[first,last,logarithmic](double v){return int(std::lround(((logarithmic?std::log(v):v)-first)/(last-first)*10000));};
             slider->setValue(position(spin->value()));layout->addWidget(slider,1);layout->addWidget(spin);fields_.addRow(label,row);
@@ -177,6 +180,9 @@ public:
         case filters::Kind::MotionBlur:number("Angle",request_.settings.angle,-90,90,1);number("Distance",request_.settings.distance,1,2000,1);break;
         case filters::Kind::AddNoise:{number("Amount",request_.settings.amount,.1,400,1);auto* gaussian=new QCheckBox("Gaussian");auto* mono=new QCheckBox("Monochromatic");gaussian->setChecked(request_.settings.gaussian);mono->setChecked(request_.settings.monochromatic);fields_.addRow(gaussian);fields_.addRow(mono);connect(gaussian,&QCheckBox::toggled,&dialog_,[this](bool value){request_.settings.gaussian=value;change();});connect(mono,&QCheckBox::toggled,&dialog_,[this](bool value){request_.settings.monochromatic=value;change();});break;}
         case filters::Kind::LensCorrection:number("Distortion",request_.settings.distortion,-100,100,1);break;
+        case filters::Kind::Vignette:{number("Amount",request_.settings.vignetteAmount,0,100,1);number("Midpoint",request_.settings.vignetteMidpoint,0,100,1);number("Roundness",request_.settings.vignetteRoundness,-100,100,1);number("Feather",request_.settings.vignetteFeather,0,100,1);number("Highlights",request_.settings.vignetteHighlights,0,100,1);auto* color=new QPushButton("Choose edge color…");fields_.addRow("Color",color);connect(color,&QPushButton::clicked,&dialog_,[this,color]{auto& s=request_.settings;if(host_.openColor){QPointer<FilterPanel> owner=this;host_.openColor({s.vignetteRed,s.vignetteGreen,s.vignetteBlue},"Color Picker (Vignette)",[owner,color](effects_tools::PaletteColor value){if(!owner||owner->closed_||owner->committing_)return;auto& settings=owner->request_.settings;settings.vignetteRed=value.red;settings.vignetteGreen=value.green;settings.vignetteBlue=value.blue;color->setText(QColor::fromRgbF(value.red,value.green,value.blue).name());owner->change();});return;}auto c=QColorDialog::getColor(QColor::fromRgbF(s.vignetteRed,s.vignetteGreen,s.vignetteBlue),&dialog_,"Vignette Color");if(c.isValid()){s.vignetteRed=c.redF();s.vignetteGreen=c.greenF();s.vignetteBlue=c.blueF();color->setText(c.name());change();}});break;}
+        case filters::Kind::BloomGlow:number("Amount",request_.settings.bloomAmount,0,100,1);number("Radius",request_.settings.bloomRadius,1,150,1);break;
+        case filters::Kind::TonalContrast:number("Amount",request_.settings.tonalAmount,0,100,1);number("Radius",request_.settings.tonalRadius,1,100,1);number("Shadows",request_.settings.tonalShadows,-100,100,1);number("Midtones",request_.settings.tonalMidtones,-100,100,1);number("Highlights",request_.settings.tonalHighlights,-100,100,1);break;
         case filters::Kind::ContentAwareFill:break;
         }
         connect(&debounce_,&QTimer::timeout,&dialog_,[this]{start();});
@@ -196,7 +202,7 @@ public:
         connect(apply_,&QPushButton::clicked,&dialog_,[this]{
             if(request_.kind==filters::Kind::LensCorrection&&request_.settings.distortion==0){dialog_.reject();return;}
             if(host_.valid&&!host_.valid()){committing_=false;cancel();return;}
-            if(remember_)remember_(request_.settings.normalized());committing_=true;apply_->setEnabled(false);buttons_.button(QDialogButtonBox::Cancel)->setEnabled(false);
+            if(host_.closeColor)host_.closeColor(true);if(remember_)remember_(request_.settings.normalized());committing_=true;apply_->setEnabled(false);buttons_.button(QDialogButtonBox::Cancel)->setEnabled(false);
             for(auto* control:dialog_.findChildren<QDoubleSpinBox*>())control->setEnabled(false);
             for(auto* control:dialog_.findChildren<QCheckBox*>())control->setEnabled(false);
             for(auto* control:dialog_.findChildren<QSlider*>())control->setEnabled(false);
@@ -215,12 +221,13 @@ public:
 };
 }
 void MainWindow::runFilter(int kindIndex){
-    auto* p=current();auto* layer=active();if(editPanel_||!p||!p->document||!layer||!layer->raster||layer->group||!layer->adjustmentJson.empty())return;
-    const QStringList names{"Gaussian Blur","Motion Blur","Add Noise","Lens Correction","Content-Aware Fill"};
+    auto* p=current();auto* layer=active();if(editPanel_||!p||!p->document||!layer||(!layer->raster&&kindIndex!=int(filters::Kind::Vignette))||layer->group||!layer->adjustmentJson.empty())return;
+    const QStringList names{"Gaussian Blur","Motion Blur","Add Noise","Lens Correction","Content-Aware Fill","Vignette","Bloom / Glow","Tonal Contrast"};
     if(kindIndex<0||kindIndex>=names.size())throw std::runtime_error("Unsupported filter kind");
     const auto kind=filters::Kind(kindIndex);if(kind==filters::Kind::ContentAwareFill&&!p->document->selection)return;
-    const auto before=*p->document;const auto original=*layer;
-    filters::Request request;request.settings=p->toolState.filterSettings.pixels;request.kind=kind;request.source=layer->raster;request.transform=layer->transform;request.seed=QRandomGenerator::global()->generate();request.selection=filterSelection(before,original,kind);
+    const auto before=*p->document;auto original=*layer;const bool fillsClear=kind==filters::Kind::Vignette&&!original.raster;
+    if(fillsClear){if(original.mask&&!original.mask->placement)original.mask->placement=original.transform;original.raster=Raster::filled(before.width,before.height);original.transform={0,0,double(before.width),double(before.height)};}
+    filters::Request request;request.vignetteFillsClear=fillsClear;request.settings=p->toolState.filterSettings.pixels;request.kind=kind;request.source=original.raster;request.transform=original.transform;request.seed=QRandomGenerator::global()->generate();request.selection=filterSelection(before,original,kind);
     auto host=makeEditPanelHost(*p,before,names[kindIndex].toStdString());
     editPanel_=new FilterPanel(this,before,original,request,names[kindIndex],std::move(host),[p](const filters::Settings& value){p->toolState.filterSettings.pixels=value;});refresh(false,false);
 }

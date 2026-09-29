@@ -1,0 +1,34 @@
+{
+  "libraw": {
+    "version": "0.21.5",
+    "url": "https://www.libraw.org/data/LibRaw-0.21.5.zip",
+    "archive": "LibRaw-0.21.5.zip",
+    "sha256": "2cee6c4bbb47a47208d78d448691a7022b98151f34df5e98e2a9d3cb82df625d",
+    "license": "CDDL-1.0 (chosen from upstream dual LGPL-2.1/CDDL licensing)",
+    "destination": "libraw",
+    "probe": "libraw/LibRaw-0.21.5/libraw/libraw.h"
+  },
+  "zlib": {
+    "version": "1.3.1",
+    "url": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+    "archive": "zlib-1.3.1.tar.gz",
+    "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+    "license": "Zlib",
+    "destination": "zlib",
+    "probe": "zlib/zlib-1.3.1/zlib.h"
+  },
+  "qtsvg": {
+    "version": "6.8.3",
+    "url": "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_683/qt6_683/qt.qt6.683.win64_msvc2022_64/6.8.3-0-202503201308qtsvg-Windows-Windows_11_23H2-MSVC2022-Windows-Windows_11_23H2-X86_64.7z",
+    "archive": "qtsvg.7z",
+    "sha256": "48d1d798894cbf8696a0010fcfdeafea652b35159c56ea2060ee85ce3d0048f7",
+    "license": "LGPL-3.0-only or GPL-2.0-only or GPL-3.0-only or commercial",
+    "destination": "qt",
+    "probe": "qt/lib/cmake/Qt6Svg/Qt6SvgConfig.cmake",
+    "source": {
+      "url": "https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtsvg-everywhere-src-6.8.3.tar.xz",
+      "archive": "qtsvg-everywhere-src-6.8.3.tar.xz",
+      "sha256": "35eb516460f00f264eb504baa253432384351cf23fb9980a5857190e8deef438"
+    }
+  }
+}

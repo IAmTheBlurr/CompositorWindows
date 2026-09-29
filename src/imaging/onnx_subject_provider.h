@@ -14,4 +14,12 @@ public:
     // Executes the real CPU graph and validates finite output without requiring a semantic subject.
     void healthCheck(const ImportOptions& = {});
 };
+// Pinned SlimSAM predicts the instance requested by a positive point prompt.
+class OnnxObjectProvider final {
+    struct Impl;std::unique_ptr<Impl> impl_;
+public:
+    explicit OnnxObjectProvider(const std::filesystem::path& modelDirectory);
+    ~OnnxObjectProvider();
+    GrayMask infer(const RgbaImage&,double x,double y,const ImportOptions& = {});
+};
 }

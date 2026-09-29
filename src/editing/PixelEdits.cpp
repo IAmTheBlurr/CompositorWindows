@@ -1,7 +1,9 @@
+#include "core/DocumentLimits.h"
 // SelectionEdits.swift, SelectionClipboard.swift, BrushStroke.swift and Gradient.swift
 // at the pinned revision. Copyright (c) 2026 Wonder Assembly LLC;
 // MIT notice in graphics/upstream/LICENSE.
 #include "PixelEdits.h"
+#include "Text.h"
 #include "GradientPreview.h"
 #include "graphics/MaskSampling.h"
 #include <algorithm>
@@ -11,7 +13,7 @@
 
 namespace compositor::editing {
 namespace {
-void sizeCheck(int w,int h){if(w<1||h<1||w>30000||h>30000||uint64_t(w)*h>100000000)throw std::runtime_error("Pixel edit exceeds raster budget");}
+void sizeCheck(int w,int h){if(w<1||h<1||w>30000||h>30000||uint64_t(w)*h>limits::surfacePixels)throw std::runtime_error("Pixel edit exceeds raster budget");}
 void grayCheck(const GrayRaster& g){sizeCheck(g.width,g.height);if(g.pixels.size()!=size_t(g.width)*g.height)throw std::runtime_error("Invalid mask storage");}
 uint8_t byte(double v){return uint8_t(std::clamp(std::lround(v),0L,255L));}
 Rect intersect(Rect a,Rect b){double x=std::max(a.x,b.x),y=std::max(a.y,b.y),right=std::min(a.x+a.width,b.x+b.width),bottom=std::min(a.y+a.height,b.y+b.height);return {x,y,std::max(0.,right-x),std::max(0.,bottom-y)};}
@@ -108,11 +110,11 @@ static Layer editLayerImpl(const Layer& layer,const Document& doc,PixelEdit oper
     });
     if(changed==source)return layer;
     if(operation!=PixelEdit::Invert){auto crop=alphaBounds(*changed);changed=reframe(changed,crop);grid.x+=crop.x;grid.y+=crop.y;grid.width=crop.width;grid.height=crop.height;transform=transformFor(layer.transform,grid,baseWidth,baseHeight);}
-    auto result=layer;result.raster=changed;result.transform=transform;result.shapeJson.clear();
+    auto result=layer;result.raster=changed;result.transform=transform;result.rasterizeSource();
     if(result.mask&&!result.mask->placement&&grid!=Rect{0,0,double(baseWidth),double(baseHeight)})result.mask->raster=reframeMask(*result.mask->raster,grid,baseWidth,baseHeight);
     return result;
 }
-Layer editLayer(const Layer& layer,const Document& doc,PixelEdit operation,Pixel color,bool targetMask,uint8_t maskBackground){return editLayerImpl(layer,doc,operation,color,targetMask,maskBackground,nullptr);}
+Layer editLayer(const Layer& layer,const Document& doc,PixelEdit operation,Pixel color,bool targetMask,uint8_t maskBackground){if(!targetMask&&operation==PixelEdit::Fill&&!layer.textJson.empty()){auto style=decodeTextStyle(layer.textJson);style.red=color.r/255.;style.green=color.g/255.;style.blue=color.b/255.;return restyleText(layer,style);}return editLayerImpl(layer,doc,operation,color,targetMask,maskBackground,nullptr);}
 Layer gradientLayer(const Layer& layer,const Document& doc,Point start,Point end,GradientSettings settings,Pixel foreground,Pixel background,bool targetMask){
     return GradientPreview(layer,doc,start,end,settings,foreground,background,targetMask).materializeLayer();
 }
@@ -124,7 +126,7 @@ std::optional<CopiedPixels> copyPixels(const Document& doc,std::optional<std::st
     if(layerID){auto at=std::find_if(doc.layers.begin(),doc.layers.end(),[&](const Layer& l){return l.id==*layerID;});if(at==doc.layers.end())throw std::runtime_error("Copy layer does not exist");
         if(targetMask){if(!at->mask||!at->mask->raster)return {};const auto& gray=*at->mask->raster;grayCheck(gray);auto t=at->mask->placement.value_or(at->transform);uint8_t outside=at->mask->placement?graphics::cachedMaskBackground(at->mask->raster):0;
             image=editRaster(Raster::filled(w,h,{outside,outside,outside,255}),[&](Pixel old,int px,int py){auto u=t.toUnit({rx+px+.5,ry+py+.5});if(u.x<0||u.y<0||u.x>=1||u.y>=1)return old;auto value=gray.pixel(int(u.x*gray.width),int(u.y*gray.height));return Pixel{value,value,value,255};});
-        }else {if(!at->raster)return {};Document current=doc;current.layers={*at};auto& layer=current.layers.front();layer.parentId.clear();layer.maskSourceId.clear();layer.mask.reset();layer.opacity=1;layer.blend=Blend::Normal;layer.visible=true;layer.group=false;layer.adjustmentJson.clear();layer.shapeJson.clear();current.selection.reset();image=backend.render(current,rx,ry,w,h);}
+        }else {if(!at->raster)return {};Document current=doc;current.layers={*at};auto& layer=current.layers.front();layer.parentId.clear();layer.maskSourceId.clear();layer.mask.reset();layer.opacity=1;layer.blend=Blend::Normal;layer.visible=true;layer.group=false;layer.adjustmentJson.clear();layer.rasterizeSource();current.selection.reset();image=backend.render(current,rx,ry,w,h);}
     }else {if(targetMask)throw std::runtime_error("Copy merged cannot target an owned mask");if(std::none_of(doc.layers.begin(),doc.layers.end(),[](const Layer& layer){return bool(layer.raster);}))return {};image=backend.render(doc,rx,ry,w,h);}
     if(!image||image->width!=w||image->height!=h)throw std::runtime_error("Copy renderer returned an invalid region");
     if(doc.selection){const auto& mask=*doc.selection->coverage;image=editRaster(image,[&](Pixel p,int px,int py){double a=mask.pixel(rx+px,ry+py)/255.;return Pixel{byte(p.r*a),byte(p.g*a),byte(p.b*a),byte(p.a*a)};});}

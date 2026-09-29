@@ -17,6 +17,12 @@ bool MainWindow::handleEditingKey(QKeyEvent* event){
     const auto key=event->key();const auto modifiers=event->modifiers();
     const bool shift=modifiers.testFlag(Qt::ShiftModifier),control=modifiers.testFlag(Qt::ControlModifier);
     const bool plain=(modifiers&~Qt::ShiftModifier)==Qt::NoModifier;
+    if(key==Qt::Key_Tab&&modifiers==Qt::NoModifier&&tool_==Tool::Wand){objectSelection_=!objectSelection_;if(auto*mode=findChild<QComboBox*>("wandMode"))mode->setCurrentIndex(objectSelection_?1:0);return true;}
+    if(key==Qt::Key_Tab&&modifiers==Qt::NoModifier){
+        if(tool_==Tool::Marquee){ellipse_=!ellipse_;if(auto*mode=findChild<QComboBox*>("marqueeShape"))mode->setCurrentIndex(ellipse_?1:0);refresh(false,false);return true;}
+        if(tool_==Tool::Brush||tool_==Tool::Eraser){selectTool(tool_==Tool::Brush?Tool::Eraser:Tool::Brush);return true;}
+        if(tool_==Tool::Lasso||tool_==Tool::Polygon){lassoKind_=lassoKind_==editing::LassoKind::Freehand?editing::LassoKind::Polygonal:editing::LassoKind::Freehand;selectTool(Tool::Lasso);return true;}
+    }
     const bool arrow=key==Qt::Key_Left||key==Qt::Key_Right||key==Qt::Key_Up||key==Qt::Key_Down;
     const bool remove=key==Qt::Key_Delete||key==Qt::Key_Backspace;
     auto* project=current();auto* layer=active();
@@ -42,7 +48,7 @@ bool MainWindow::handleEditingKey(QKeyEvent* event){
                 if(canPaint&&!project->maskSelected&&layer->raster){
                     editing_transform::PixelTransformSession session(*layer,project->document->selection->coverage);
                     if(session.begin()){session.move(delta);auto result=session.apply();const auto selection=editing::moveSelectionCoverage(project->document->selection,delta);finishOpacityEdit();
-                        edit("Move Pixels",[&](Document& document){auto& target=*active();const auto source=target.raster;target=std::move(result.layer);if(target.raster!=source)target.shapeJson.clear();document.selection=selection;});}
+                        edit("Move Pixels",[&](Document& document){auto& target=*active();const auto source=target.raster;target=std::move(result.layer);if(target.raster!=source)target.rasterizeSource();document.selection=selection;});}
                 }return true;
             }
             const bool selectionTool=tool_==Tool::Marquee||tool_==Tool::Lasso||tool_==Tool::Polygon||tool_==Tool::Wand;
@@ -74,10 +80,10 @@ bool MainWindow::handleEditingKey(QKeyEvent* event){
         }
         if(key==Qt::Key_Space){spaceHeld_=true;refreshBrushPointer();if(canvas())canvas()->setCursor(spaceDragging_?Qt::ClosedHandCursor:Qt::OpenHandCursor);return true;}
         if(plain&&shift&&(key==Qt::Key_Plus||key==Qt::Key_Equal||key==Qt::Key_Minus||key==Qt::Key_Underscore)){
-            if(canEditAppearance()){const bool forward=key==Qt::Key_Plus||key==Qt::Key_Equal;const int count=int(blendNames.size()),index=int(active()->blend);setLayerBlendMode(Blend((index+(forward?1:count-1))%count));}return true;
+            if(canEditAppearance()){const bool forward=key==Qt::Key_Plus||key==Qt::Key_Equal;const int count=int(blendMenuModes.size()),index=int(std::find(blendMenuModes.begin(),blendMenuModes.end(),active()->blend)-blendMenuModes.begin());setLayerBlendMode(blendMenuModes[size_t((index+(forward?1:count-1))%count)]);}return true;
         }
-        if(plain&&shift&&key==Qt::Key_U){
-            if(tool_==Tool::Shape){if(!shapeDraftId_.empty())pointerCancel();shapeStyle_.kind=shapeStyle_.kind==editing::ShapeKind::Rectangle?editing::ShapeKind::Ellipse:editing::ShapeKind::Rectangle;if(auto* combo=findChild<QComboBox*>("shapeKind")){QSignalBlocker block(combo);combo->setCurrentIndex(int(shapeStyle_.kind));}refresh(false,false);}else selectTool(Tool::Shape);return true;
+        if((plain&&shift&&key==Qt::Key_U)||(plain&&!shift&&key==Qt::Key_Tab&&tool_==Tool::Shape)){
+            if(tool_==Tool::Shape){if(!shapeDraftId_.empty())pointerCancel();shapeStyle_.kind=editing::ShapeKind((int(shapeStyle_.kind)+1)%3);if(auto* combo=findChild<QComboBox*>("shapeKind")){QSignalBlocker block(combo);combo->setCurrentIndex(int(shapeStyle_.kind));}refresh(false,false);}else selectTool(Tool::Shape);return true;
         }
     }catch(const std::exception& error){if(transformSession_&&!transformSession_->persistent)cancelTransformSession();statusBar()->showMessage(error.what());return true;}
     return false;
@@ -96,6 +102,7 @@ void MainWindow::keyReleaseEvent(QKeyEvent* event){if(event->key()==Qt::Key_Spac
 void MainWindow::changeEvent(QEvent* event){if(event->type()==QEvent::ActivationChange&&!isActiveWindow())cancelTemporaryHand();QMainWindow::changeEvent(event);}
 
 void MainWindow::interruptPointer(){
+    if(!textPanel_.isNull()){pointerOwner_=nullptr;return;}
     stopSelectionAutoscroll();
     cancelTemporaryHand();cancelBrushTip();samplingPalette_=false;zoomDragging_=false;if(canvas())canvas()->setSampleRing({});
     // Focus changes stop dragging without applying/cancelling a pending gradient.

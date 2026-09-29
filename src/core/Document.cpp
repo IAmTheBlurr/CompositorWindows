@@ -1,4 +1,5 @@
 #include "Document.h"
+#include "DocumentLimits.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -14,11 +15,12 @@
 #include <mutex>
 
 namespace compositor {
+uint64_t limits::documentPixels(){static const uint64_t budget=[](){MEMORYSTATUSEX memory{sizeof(memory)};return GlobalMemoryStatusEx(&memory)?std::clamp<uint64_t>(memory.ullTotalPhys/16,surfacePixels,800000000):surfacePixels;}();return budget;}
 static std::atomic<uint64_t> materializations{0};
 uint64_t Raster::materializationCount(){return materializations.load();}
 void Raster::resetMaterializationCount(){materializations.store(0);}
 namespace {
-void sizeCheck(int w,int h){if(w<1||h<1||w>30000||h>30000||uint64_t(w)*uint64_t(h)>100000000)throw std::runtime_error("Raster dimensions exceed supported budget");}
+void sizeCheck(int w,int h){if(w<1||h<1||w>30000||h>30000||uint64_t(w)*uint64_t(h)>limits::surfacePixels)throw std::runtime_error("Raster dimensions exceed supported budget");}
 uint8_t byte(double n){return uint8_t(std::clamp(std::lround(n),0L,255L));}
 using Color=std::array<double,3>;
 double lum(Color c){return .3*c[0]+.59*c[1]+.11*c[2];}
@@ -26,7 +28,26 @@ double sat(Color c){return *std::max_element(c.begin(),c.end())-*std::min_elemen
 Color clip(Color c){double l=lum(c),n=*std::min_element(c.begin(),c.end()),x=*std::max_element(c.begin(),c.end());if(n<0)for(auto&v:c)v=l+(v-l)*l/(l-n);if(x>1)for(auto&v:c)v=l+(v-l)*(1-l)/(x-l);return c;}
 Color setLum(Color c,double l){double d=l-lum(c);for(auto&v:c)v+=d;return clip(c);}
 Color setSat(Color c,double s){std::array<int,3> i{0,1,2};std::sort(i.begin(),i.end(),[&](int a,int b){return c[a]<c[b];});double lo=c[i[0]],hi=c[i[2]];c[i[1]]=hi>lo?(c[i[1]]-lo)*s/(hi-lo):0;c[i[2]]=hi>lo?s:0;c[i[0]]=0;return c;}
-double separable(double b,double s,Blend mode){switch(mode){case Blend::Multiply:return b*s;case Blend::Screen:return b+s-b*s;case Blend::Overlay:return b<=.5?2*b*s:1-2*(1-b)*(1-s);case Blend::Darken:return std::min(b,s);case Blend::Lighten:return std::max(b,s);case Blend::Difference:return std::abs(b-s);case Blend::ColorDodge:return b==0?0:s>=1?1:std::min(1.,b/(1-s));case Blend::ColorBurn:return b>=1?1:s==0?0:1-std::min(1.,(1-b)/s);default:return s;}}
+double separable(double b,double s,Blend mode){
+    const auto burn=[](double b,double s){return b>=1?1:s<=0?0:1-std::min(1.,(1-b)/s);};
+    const auto dodge=[](double b,double s){return b<=0?0:s>=1?1:std::min(1.,b/(1-s));};
+    const auto vivid=[&](double b,double s){return s<=.5?burn(b,2*s):dodge(b,2*s-1);};
+    switch(mode){
+    case Blend::Multiply:return b*s;case Blend::Screen:return b+s-b*s;
+    case Blend::Overlay:return b<=.5?2*b*s:1-2*(1-b)*(1-s);
+    case Blend::HardLight:return s<=.5?2*b*s:1-2*(1-b)*(1-s);
+    case Blend::SoftLight:return s<=.5?b-(1-2*s)*b*(1-b):b+(2*s-1)*((b<=.25?((16*b-12)*b+4)*b:std::sqrt(b))-b);
+    case Blend::Darken:return std::min(b,s);case Blend::Lighten:return std::max(b,s);
+    case Blend::Difference:return std::abs(b-s);case Blend::Exclusion:return b+s-2*b*s;
+    case Blend::ColorDodge:return dodge(b,s);case Blend::ColorBurn:return burn(b,s);
+    case Blend::LinearBurn:return std::max(0.,b+s-1);case Blend::LinearDodge:return std::min(1.,b+s);
+    case Blend::VividLight:return vivid(b,s);case Blend::LinearLight:return std::clamp(b+2*s-1,0.,1.);
+    case Blend::PinLight:return s<=.5?std::min(b,2*s):std::max(b,2*s-1);
+    case Blend::HardMix:return vivid(b,s)<.5?0:1;
+    case Blend::Subtract:return std::max(0.,b-s);case Blend::Divide:return s<=0?1:std::min(1.,b/s);
+    default:return s;
+    }
+}
 Pixel scale(Pixel p,double a){return {byte(p.r*a),byte(p.g*a),byte(p.b*a),byte(p.a*a)};}
 Pixel sample(const Raster& r,Point u,Transform::Sampling sampling){double x=u.x*r.width,y=u.y*r.height;if(x<0||y<0||x>=r.width||y>=r.height)return {};if(sampling==Transform::Sampling::Nearest)return r.pixel(int(x),int(y));x-=.5;y-=.5;int ix=int(std::floor(x)),iy=int(std::floor(y));double fx=x-ix,fy=y-iy;auto get=[&](int a,int b){return r.pixel(std::clamp(a,0,r.width-1),std::clamp(b,0,r.height-1));};auto a=get(ix,iy),b=get(ix+1,iy),c=get(ix,iy+1),d=get(ix+1,iy+1);auto mix=[&](uint8_t Pixel::*m){return byte((1-fy)*((1-fx)*(a.*m)+fx*(b.*m))+fy*((1-fx)*(c.*m)+fx*(d.*m)));};return {mix(&Pixel::r),mix(&Pixel::g),mix(&Pixel::b),mix(&Pixel::a)};}
 double maskCoverage(const Layer& l,Point p){if(!l.mask||!l.mask->enabled||!l.mask->raster)return 1;const auto& r=*l.mask->raster;if(r.width==1&&r.height==1)return r.pixels[0]/255.;auto u=l.mask->placement.value_or(l.transform).toUnit(p);return r.pixel(int(std::floor(u.x*r.width)),int(std::floor(u.y*r.height)))/255.;}
@@ -80,13 +101,16 @@ void validateDocument(const Document& d) {
     if (d.width < 1 || d.height < 1 || d.width > 30000 || d.height > 30000 ||
         d.layers.size() > 10000 || !std::isfinite(d.resolution) || d.resolution < 1 || d.resolution > 9600)
         throw std::runtime_error("Invalid document dimensions or resolution");
+    if(d.guides.size()>1000)throw std::runtime_error("Too many guides");
+    std::unordered_set<std::string> guideIds;
+    for(const auto&g:d.guides)if(g.id.empty()||!guideIds.insert(g.id).second||!std::isfinite(g.position)||std::abs(g.position)>1000000||(g.axis!=CanvasGuide::Axis::Horizontal&&g.axis!=CanvasGuide::Axis::Vertical))throw std::runtime_error("Invalid guide");
     std::unordered_map<std::string, const Layer*> layers;
     uint64_t imagePixels = 0, maskPixels = 0;
     for (const auto& layer : d.layers) {
         if (layer.id.empty() || !layers.emplace(layer.id, &layer).second || layer.name.empty() ||
             layer.name.size() > 16384 || !layer.transform.valid() || !std::isfinite(layer.opacity) ||
-            layer.opacity < 0 || layer.opacity > 1 || int(layer.blend) < 0 || int(layer.blend) > 12 ||
-            (layer.group && (layer.opacity != 1 || layer.blend != Blend::Normal || layer.raster)) ||
+            layer.opacity < 0 || layer.opacity > 1 || int(layer.blend) < 0 || int(layer.blend) >= int(blendNames.size()) ||
+            (layer.group && (layer.blend != Blend::Normal || layer.raster)) ||
             (!layer.adjustmentJson.empty() && (layer.group || layer.raster)))
             throw std::runtime_error("Invalid layer metadata");
         if (layer.raster) {
@@ -106,7 +130,7 @@ void validateDocument(const Document& d) {
                 throw std::runtime_error("Invalid mask");
         }
     }
-    if (imagePixels > 100000000 || maskPixels > 100000000)
+    if (imagePixels > limits::documentPixels() || maskPixels > limits::documentPixels())
         throw std::runtime_error("Project pixel budget exceeded");
     if(d.selection && d.selection->coverage) {
         const auto& coverage=*d.selection->coverage;
@@ -208,7 +232,9 @@ size_t History::retainedBytes(const std::optional<Document>& doc,std::span<const
     auto scan=[&](const std::optional<Document>& document,bool count){
         size_t bytes=0;
         if(!document)return bytes;
+        if(count)bytes+=document->guides.size()*sizeof(CanvasGuide);
         for(const auto&layer:document->layers){
+            if(count)bytes+=layer.textJson.size()+layer.effectsJson.size()+layer.shapeJson.size()+layer.adjustmentJson.size();
             if(layer.raster)for(const auto&tile:layer.raster->tiles)
                 if(seen.insert(tile.get()).second&&count)bytes+=sizeof(Raster::Tile);
             if(layer.mask&&layer.mask->raster&&seen.insert(layer.mask->raster.get()).second&&count)

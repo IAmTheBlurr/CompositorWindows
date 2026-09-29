@@ -4,12 +4,13 @@
 namespace {
 QComboBox* targetCombo(MainWindow& window){
     auto* combo=window.findChild<QComboBox*>("layerEditTarget");
-    require(combo&&combo->isVisible(),"Visible layer target control");return combo;
+    require(combo,"Layer target state control");return combo;
 }
 void targetKey(MainWindow& window,bool mask){
     auto* combo=targetCombo(window);require(combo->isEnabled(),"Layer target route enabled");
-    window.raise();window.activateWindow();combo->setFocus();
-    QTest::keyClick(combo,mask?Qt::Key_End:Qt::Key_Home);
+    auto* controller=ui::LayerPanelController::find(tree(window));require(controller,"Layer controller");auto* row=tree(window)->currentItem();require(row,"Active layer row");const auto id=row->data(0,Qt::UserRole).toString().toStdString();
+    const auto control=controller->actionControl(id,mask?ui::LayerControlKind::Mask:ui::LayerControlKind::Image);require(control&&control->enabled&&control->exposed&&!control->globalRect.isEmpty(),"Visible layer thumbnail target");
+    window.raise();window.activateWindow();QTest::mouseClick(tree(window)->viewport(),Qt::LeftButton,Qt::NoModifier,tree(window)->viewport()->mapFromGlobal(control->globalRect.center()));
     require(combo->currentIndex()==int(mask),"Target control displays requested choice");
 }
 void samePending(const std::string& scenario,MainWindow& window,EditorProject& project,const PendingObservation& before){

@@ -20,7 +20,7 @@ struct CommandState {
     bool renamingLayer{},importError{},adjustmentEditing{},transformEdit{},persistentTransform{};
     bool crop{},gradient{},pixelMove{},colorPicker{},lassoDraft{},managing{},modalDialog{};
     bool activeLayer{},group{},asset{},adjustmentLayer{},mask{},maskEnabled{},maskSelected{},effectiveVisible{},singleSelected{};
-    bool selection{},selectionEmpty{},renderHasPixels{},historyUndo{},historyRedo{},clipboardImage{};
+    bool selection{},selectionEmpty{},renderHasPixels{},historyUndo{},historyRedo{},clipboardImage{},clipboardLayers{};
     bool transformable{},hasParent{},canMoveUp{},canMoveDown{},canMerge{},canToggleClipping{},hasOtherProject{},shape{};
     bool moveTool{};
 };
@@ -39,7 +39,7 @@ enum class CommandGate {
     SingleLayer,Duplicate,Parent,MoveUp,MoveDown,Merge,Clipping,OtherProject,Mask,AddMask,ImageAlpha,
     Selection,ModifySelection,Copy,Cut,CopyMerged,Paste,Paint,Clear,Invert,Adjust,NewAdjustment,
     EditAdjustment,ContentAwareFill,Transform,TransformDraft,TransformControls,ShapeStyle,Tool,Palette,
-    ApplyTransform,ApplyGradient,ApplyCrop
+    ApplyTransform,ApplyGradient,ApplyCrop,Vignette
 };
 enum class CommandPreparation { None,FinishAppearance,CommitTransformAndGradient,ProjectOperation };
 enum class TextCommand { None,Undo,Redo,Cut,Copy,Paste,SelectAll };
@@ -72,6 +72,7 @@ public:
     void setErrorHandler(std::function<void(const QString&)> handler){error_=std::move(handler);}
     bool invoke(const QString& id);
     QJsonArray manifest()const;
+    void showShortcutEditor();
 protected:
     bool eventFilter(QObject*,QEvent*)override;
 private:
@@ -82,6 +83,8 @@ private:
     std::function<void(const QString&)> error_;
     std::vector<Entry> entries_;
     bool refreshing_{};
+    bool translatingShortcut_{};
+    bool translateShortcut(QObject*,QEvent*);
     bool invokeEntry(size_t);
 };
 }

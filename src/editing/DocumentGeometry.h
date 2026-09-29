@@ -25,6 +25,9 @@ struct CanvasSizeOptions {
 // bottom layer and leaves the old canvas transparent. Changed size drops selection.
 Document canvasResize(const Document&,const CanvasSizeOptions&);
 Document cropDocument(const Document&,Rect);
+enum class TrimBasis { Transparent,TopLeft,BottomRight };
+struct TrimOptions {TrimBasis basedOn{TrimBasis::Transparent};bool top{true},bottom{true},left{true},right{true};int tolerance{};};
+std::optional<Rect> trimBounds(const Document&,const TrimOptions&,std::function<bool()> cancelled={});
 struct ImageSizeOptions {
     int width,height;
     double resolution{72};

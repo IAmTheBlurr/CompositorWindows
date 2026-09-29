@@ -65,7 +65,8 @@ std::optional<SelectionOutline> finishSelection(const std::optional<SelectionOut
     const SelectionOutline& draft, SelectionMode, int width, int height, bool antialiased = true);
 std::optional<SelectionOutline> inverseSelection(const std::optional<SelectionOutline>& current,
     int width, int height);
-std::optional<Selection> rasterSelection(const std::optional<SelectionOutline>&, int width, int height);
+std::optional<Selection> rasterSelection(const std::optional<SelectionOutline>&, int width, int height,double feather=0);
+std::shared_ptr<const GrayRaster> featherCoverage(std::shared_ptr<const GrayRaster>,double feather,std::shared_ptr<const SelectionOutline> outline={});
 bool appendLassoPoint(std::vector<Point>&, Point); // source quarter-pixel filter
 Rect coverageBounds(const GrayRaster&); // integer nonzero-pixel bounds
 // Preserves and moves Selection.outline when present. Coverage-only callers pass
