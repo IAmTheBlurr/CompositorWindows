@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 #pragma once
 // Translated from Compositor retouch tools, MIT license in LICENSE.
 #include "graphics/BrushSession.h"
@@ -41,7 +42,7 @@ class RetouchSession {
 public:
     RetouchSession(Layer original,int canvasWidth,int canvasHeight,Settings,Sources={},
         std::shared_ptr<const GrayRaster> selection={},std::shared_ptr<graphics::D3D11BrushCoverage> accelerator={},
-        bool targetMask=false,uint64_t remainingPixelBudget=100000000);
+        bool targetMask=false,uint64_t remainingPixelBudget=limits::surfacePixels);
     RetouchSession(std::shared_ptr<const Raster> original,Transform,int canvasWidth,int canvasHeight,
         Settings,Sources={},std::shared_ptr<const GrayRaster> selection={},std::shared_ptr<graphics::D3D11BrushCoverage> accelerator={});
     // Blur is the sole retouch mode supported on mask targets, matching source.

@@ -2,6 +2,7 @@
 // Source predicates deliberately remain separate from Qt focus/modal policy.
 #include "CommandRegistry.h"
 #include <QAction>
+#include <QSettings>
 #include <QApplication>
 #include <QAbstractSpinBox>
 #include <QClipboard>
@@ -44,7 +45,7 @@ bool commandEnabled(CommandGate gate,const CommandState&s){
     case CommandGate::Layers:return editable;
     case CommandGate::ActiveLayer:return editable&&s.activeLayer;
     case CommandGate::SingleLayer:return editable&&s.singleSelected&&s.activeLayer;
-    case CommandGate::Duplicate:return canCopyPixels(s)||(!s.selection&&editable&&s.activeLayer&&!s.group);
+    case CommandGate::Duplicate:return canCopyPixels(s)||(!s.selection&&editable&&s.activeLayer);
     case CommandGate::Parent:return editable&&s.activeLayer&&s.hasParent;
     case CommandGate::MoveUp:return editable&&s.canMoveUp;
     case CommandGate::MoveDown:return editable&&s.canMoveDown;
@@ -56,13 +57,14 @@ bool commandEnabled(CommandGate gate,const CommandState&s){
     case CommandGate::ImageAlpha:return editable&&s.asset;
     case CommandGate::Selection:return editable&&s.selection;
     case CommandGate::ModifySelection:return editable&&selected&&!s.lassoDraft;
-    case CommandGate::Copy:return canCopyPixels(s);
+    case CommandGate::Copy:return canCopyPixels(s)||(editable&&s.activeLayer&&!s.selection&&!s.maskSelected);
     case CommandGate::Cut:return s.selection&&canCopyPixels(s);
     case CommandGate::CopyMerged:return editable&&(!s.selection||!s.selectionEmpty)&&s.renderHasPixels;
-    case CommandGate::Paste:return editable&&s.clipboardImage;
+    case CommandGate::Paste:return (editable&&s.clipboardImage)||(s.clipboardLayers&&canStartProjectOperation(s)&&!s.managing&&(!s.document||editable));
     case CommandGate::Paint:return canPaint(s);
     case CommandGate::Clear:return s.selection&&canPaint(s);
     case CommandGate::Invert:return !s.warpStroke&&!s.levels&&!s.hueSaturation&&!s.filterEdit&&!s.adjustmentEditing&&canInvert(s);
+    case CommandGate::Vignette:return editable&&s.activeLayer&&s.singleSelected&&!s.group&&!s.maskSelected&&!s.adjustmentLayer&&s.effectiveVisible&&(!s.selection||!s.selectionEmpty);
     case CommandGate::Adjust:return !s.warpStroke&&!s.hueSaturation&&!s.adjustmentEditing&&canAdjustColors(s);
     case CommandGate::NewAdjustment:return editable;
     case CommandGate::EditAdjustment:return editable&&s.activeLayer&&s.adjustmentLayer;
@@ -113,6 +115,7 @@ const std::vector<CommandSpec>& commandCatalog(){
         add("view.fit","View","Fit Canvas","Ctrl+0",C::View,G::Document,P::None,"Compositor/CompositorApp.swift:87");
         add("view.actual","View","Actual Pixels","Ctrl+1",C::View,G::Document,P::None,"Compositor/CompositorApp.swift:88");
         add("view.pixel_grid","View","Pixel Grid","",C::View,G::Always,P::None,"Compositor/CompositorApp.swift:93");
+        add("view.mac_title_bar","Appearance","Mac-style title bar","",C::View,G::Always,P::None,"Windows saved title-bar appearance");
         add("canvas.size","Canvas","Canvas Size…","Ctrl+Alt+C",C::Document,G::DocumentOperation,P::ProjectOperation,"Compositor/CompositorApp.swift:196");
         add("canvas.image_size","Canvas","Image Size…","Ctrl+Alt+I",C::Document,G::DocumentOperation,P::ProjectOperation,"Compositor/CompositorApp.swift:199");
         add("canvas.flip_horizontal","Canvas","Flip Canvas Horizontally","",C::Document,G::Layers,P::FinishAppearance,"Compositor/CompositorApp.swift:204");
@@ -144,17 +147,22 @@ const std::vector<CommandSpec>& commandCatalog(){
         add("transform.flip_horizontal","Transform","Flip Layer Horizontally","",C::Layer,G::Transform,P::FinishAppearance,"Compositor/CompositorApp.swift:257");
         add("transform.flip_vertical","Transform","Flip Layer Vertically","",C::Layer,G::Transform,P::FinishAppearance,"Compositor/CompositorApp.swift:259");
         add("transform.scale","Transform","Scale…","",C::Layer,G::TransformDraft,P::FinishAppearance,"Compositor/Document/EditorSession.swift:246");
-        const char*adjustments[]{"Hue/Saturation…","Levels…","Curves…","Exposure…","Gradient Map…","Grain…"};
-        const char*slugs[]{"hue_saturation","levels","curves","exposure","gradient_map","grain"};
-        for(int i=0;i<6;++i){auto id=QString("adjust.%1").arg(slugs[i]).toUtf8();add(id.constData(),"Adjustments",adjustments[i],i==0?"Ctrl+U":i==1?"Ctrl+L":i==2?"Ctrl+M":"",C::Adjustment,G::Adjust,P::CommitTransformAndGradient,"Compositor/Document/HueSaturation.swift:414");id=QString("adjust.new.%1").arg(slugs[i]).toUtf8();add(id.constData(),"New Adjustment Layer",adjustments[i],"",C::Adjustment,G::NewAdjustment,P::FinishAppearance,"Compositor/CompositorApp.swift:217");}
+        const char*adjustments[]{"Hue/Saturation…","Levels…","Curves…","Exposure…","Gradient Map…","Grain…","Black & White…","Color Balance…","Invert…","Gaussian Blur…","Motion Blur…","Add Noise…"};
+        const char*slugs[]{"hue_saturation","levels","curves","exposure","gradient_map","grain","black_white","color_balance","invert","gaussian","motion","noise"};
+        for(int i=0;i<12;++i){auto id=QString("adjust.%1").arg(slugs[i]).toUtf8();add(id.constData(),"Adjustments",adjustments[i],i==0?"Ctrl+U":i==1?"Ctrl+L":i==2?"Ctrl+M":"",C::Adjustment,G::Adjust,P::CommitTransformAndGradient,"Compositor/Document/HueSaturation.swift:414");id=QString("adjust.new.%1").arg(slugs[i]).toUtf8();add(id.constData(),"New Adjustment Layer",adjustments[i],"",C::Adjustment,G::NewAdjustment,P::FinishAppearance,"Compositor/CompositorApp.swift:217");}
+        add("layer.effects","Adjustments","Layer Effects…","",C::Layer,G::Adjust,P::FinishAppearance,"Compositor/Document/LayerEffects.swift");
         add("adjust.edit","Adjustments","Edit Adjustment Layer…","",C::Adjustment,G::EditAdjustment,P::FinishAppearance,"Compositor/CompositorApp.swift:222");
-        const char*filters[]{"Gaussian Blur…","Motion Blur…","Add Noise…","Lens Correction…","Content-Aware Fill…","Remove Background…"};
-        const char*filterIds[]{"filter.gaussian","filter.motion","filter.noise","filter.lens","filter.content_aware","filter.subject"};
-        for(int i=0;i<6;++i)add(filterIds[i],"Filters",filters[i],i==4?"Shift+Delete":"",C::Adjustment,i==4?G::ContentAwareFill:G::Adjust,P::CommitTransformAndGradient,"Compositor/Document/Filters.swift:299");
+        add("filter.camera_raw","Filters","Camera Raw…","",C::Adjustment,G::Adjust,P::CommitTransformAndGradient,"Compositor/Document/CameraRaw.swift");
+        const char*filters[]{"Gaussian Blur…","Motion Blur…","Add Noise…","Lens Correction…","Content-Aware Fill…","Remove Background…","Vignette…","Bloom / Glow…","Tonal Contrast…"};
+        const char*filterIds[]{"filter.gaussian","filter.motion","filter.noise","filter.lens","filter.content_aware","filter.subject","filter.vignette","filter.bloom","filter.tonal"};
+        for(int i=0;i<9;++i)add(filterIds[i],"Filters",filters[i],i==4?"Shift+Delete":"",C::Adjustment,i==4?G::ContentAwareFill:i==6?G::Vignette:G::Adjust,P::CommitTransformAndGradient,"Compositor/Document/Filters.swift:299");
         const char*toolLabels[]{"Move (V)","Hand (H)","Marquee (M)","Lasso (L)","Polygon","Wand (W)","Brush (B)","Eraser (E)","Clone (S)","Heal (J)","Retouch (R)","Gradient (G)","Shape (U)","Crop (C)","Eyedropper (I)","Zoom (Z)"};
         const char*toolIds[]{"move","hand","marquee","lasso","polygon","wand","brush","eraser","clone","heal","retouch","gradient","shape","crop","eyedropper","zoom"};
         const char*toolKeys[]{"V","H","M","L","","W","B","E","S","J","R","G","U","C","I","Z"};
         for(int i=0;i<16;++i){auto id=QString("tool.%1").arg(toolIds[i]).toUtf8();add(id.constData(),"Tools",toolLabels[i],toolKeys[i],C::Tool,G::Tool,P::None,"Compositor/Rendering/EditorCanvas.swift:1520");}
+        add("tool.type","Tools","Type (T)","T",C::Tool,G::Tool,P::None,"Compositor/Document/TypeTool.swift");
+        add("text.edit","Layer","Edit Text Layer…","",C::Layer,G::SingleLayer,P::FinishAppearance,"Compositor/Document/TypeTool.swift");
+        add("text.rasterize","Layer","Rasterize Text Layer","",C::Layer,G::SingleLayer,P::FinishAppearance,"Compositor/Document/TypeTool.swift");
         add("palette.foreground","Tools","Foreground","",C::Tool,G::Palette,P::None,"Compositor/Document/ColorPalette.swift:25");
         add("palette.background","Tools","Background","",C::Tool,G::Palette,P::None,"Compositor/Document/ColorPalette.swift:25");
         add("palette.swap","Tools","Swap (X)","X",C::Tool,G::Palette,P::None,"Compositor/Document/ColorPalette.swift:25");
@@ -162,6 +170,20 @@ const std::vector<CommandSpec>& commandCatalog(){
         add("gradient.apply","Drawing Options","Apply Gradient","",C::Pending,G::ApplyGradient,P::None,"Compositor/Rendering/EditorCanvas.swift:1485");
         add("gradient.cancel","Drawing Options","Cancel Gradient","",C::Pending,G::ApplyGradient,P::None,"Compositor/Rendering/EditorCanvas.swift:1482");
         add("shape.style","Drawing Options","Update Shape Style","",C::Layer,G::ShapeStyle,P::FinishAppearance,"Compositor/Document/ShapeTool.swift");
+        add("select.feather","Select","Feather…","",C::Selection,G::ModifySelection,P::FinishAppearance,"Compositor/Document/Selection.swift");
+        add("select.subject","Select","Select Subject","",C::Selection,G::Layers,P::FinishAppearance,"Compositor/Document/SubjectRemoval.swift");
+        add("edit.shortcuts","Edit","Keyboard Shortcuts…","",C::Application,G::Always,P::None,"Compositor/UI/KeyboardShortcuts.swift");
+        add("image.trim","Image","Trim…","",C::Document,G::DocumentOperation,P::ProjectOperation,"Compositor/Document/ImageTrim.swift");
+        add("view.zoomIn","View","Zoom In","Ctrl+=",C::View,G::Document,P::None,"Compositor/Rendering/EditorCanvas.swift");
+        add("view.zoomOut","View","Zoom Out","Ctrl+-",C::View,G::Document,P::None,"Compositor/Rendering/EditorCanvas.swift");
+        add("view.rulers","View","Rulers","Ctrl+R",C::Document,G::Always,P::None,"Compositor/Document/Guides.swift");
+        add("view.guides","View","Guides","Ctrl+;",C::Document,G::Always,P::None,"Compositor/Document/Guides.swift");
+        add("view.grid","View","Grid","Ctrl+'",C::Document,G::Always,P::None,"Compositor/Document/Guides.swift");
+        add("view.lockGuides","View","Lock Guides","",C::Document,G::Always,P::None,"Compositor/Document/Guides.swift");
+        add("view.newGuide","View","New Guide…","",C::Document,G::Layers,P::None,"Compositor/Document/Guides.swift");
+        add("view.clearGuides","View","Clear Guides","",C::Document,G::Layers,P::None,"Compositor/Document/Guides.swift");
+        add("view.snap","View","Snap","",C::Document,G::Always,P::None,"Compositor/Document/Guides.swift");
+        for(const auto*label:{"Guides","Grid","Layers","Document Bounds"}){auto id=QString("snap.%1").arg(label).toUtf8();add(id.constData(),"Snap To",label,"",C::Document,G::Always,P::None,"Compositor/Document/Guides.swift");}
         return list;
     }();
     return catalog;
@@ -189,7 +211,7 @@ bool dispatchText(QWidget* widget,TextCommand command){
     if(auto*line=qobject_cast<QLineEdit*>(widget))invoke(line);else if(auto*rich=qobject_cast<QTextEdit*>(widget))invoke(rich);else if(auto*plain=qobject_cast<QPlainTextEdit*>(widget))invoke(plain);return true;
 }
 }
-const CommandSpec* commandSpec(const QString& menu,const QString& label){const auto m=normalized(menu),l=normalized(label);const auto&items=commandCatalog();auto it=std::find_if(items.begin(),items.end(),[&](const CommandSpec&s){return s.menu==m&&s.label==l;});return it==items.end()?nullptr:&*it;}
+const CommandSpec* commandSpec(const QString& menu,const QString& label){const auto m=normalized(menu),l=normalized(label);const auto&items=commandCatalog();auto it=std::find_if(items.begin(),items.end(),[&](const CommandSpec&s){return normalized(s.menu)==m&&normalized(s.label)==l;});return it==items.end()?nullptr:&*it;}
 const CommandSpec* commandSpecById(const QString& id){const auto&items=commandCatalog();auto it=std::find_if(items.begin(),items.end(),[&](const CommandSpec&s){return s.id==id;});return it==items.end()?nullptr:&*it;}
 bool isTextEditingWidget(QWidget*widget){return textEditor(widget)!=nullptr;}
 bool reservesTextShortcut(const QKeyEvent&e){
@@ -210,6 +232,7 @@ void CommandRegistry::bind(QAction*action,const CommandSpec&spec,std::function<v
     action->setProperty("commandId",spec.id);action->setProperty("commandSource",spec.source);if(action->objectName().isEmpty())action->setObjectName("command."+spec.id);
     if(!spec.windowsShortcut.isEmpty())action->setShortcut(QKeySequence(spec.windowsShortcut));
     if(spec.id=="edit.redo")action->setShortcuts({QKeySequence("Ctrl+Shift+Z"),QKeySequence("Ctrl+Y")});
+    if(QSettings().contains("shortcuts/"+spec.id))action->setShortcut(QKeySequence(QSettings().value("shortcuts/"+spec.id).toString(),QKeySequence::PortableText));
     action->setShortcutContext(Qt::WindowShortcut);
     const auto index=entries_.size();entries_.push_back({action,spec,std::move(invoke),std::move(extra)});connect(action,&QAction::triggered,this,[this,index]{invokeEntry(index);});
     if(auto*menu=qobject_cast<QMenu*>(action->parent()))connect(menu,&QMenu::aboutToShow,this,[this]{refresh();});refresh();
@@ -230,6 +253,7 @@ bool CommandRegistry::invokeEntry(size_t index){
 bool CommandRegistry::invoke(const QString&id){for(size_t i=0;i<entries_.size();++i)if(entries_[i].spec.id==id&&entries_[i].action)return invokeEntry(i);return false;}
 QJsonArray CommandRegistry::manifest()const{QJsonArray result;for(const auto&e:entries_)if(e.action){QJsonArray shortcuts;for(const auto&key:e.action->shortcuts())shortcuts.append(key.toString(QKeySequence::PortableText));result.append(QJsonObject{{"id",e.spec.id},{"object_name",e.action->objectName()},{"menu",e.spec.menu},{"label",e.action->text()},{"shortcuts",shortcuts},{"class",int(e.spec.category)},{"gate",int(e.spec.gate)},{"preparation",int(e.spec.preparation)},{"text_command",int(e.spec.textCommand)},{"source",e.spec.source},{"enabled",e.action->isEnabled()}});}return result;}
 bool CommandRegistry::eventFilter(QObject*object,QEvent*event){
+    if(translateShortcut(object,event))return true;
     if(owner_&&event->type()==QEvent::ShortcutOverride){auto*widget=qobject_cast<QWidget*>(object);auto*focus=QApplication::focusWidget();if(widget&&focus&&(focus==owner_||owner_->isAncestorOf(focus))&&isTextEditingWidget(focus)&&reservesTextShortcut(*static_cast<QKeyEvent*>(event))){event->accept();return true;}}
     return QObject::eventFilter(object,event);
 }

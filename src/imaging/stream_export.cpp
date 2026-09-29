@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 #include "stream_export.h"
 #include "win32_file_path.h"
 #ifndef NOMINMAX
@@ -124,7 +125,7 @@ void writeProfile(IWICImagingFactory* imaging, IWICBitmapFrameEncode* frame, Ima
 }
 
 void validateExportExtent(std::uint32_t width, std::uint32_t height) {
-    if (!width || !height || width > 30000 || height > 30000 || std::uint64_t(width) * height > 100000000)
+    if (!width || !height || width > 30000 || height > 30000 || std::uint64_t(width) * height > limits::surfacePixels)
         throw std::invalid_argument("Image export supports canvases up to 100 megapixels and 30,000 pixels per side.");
 }
 

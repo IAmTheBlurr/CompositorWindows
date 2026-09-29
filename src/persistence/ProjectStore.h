@@ -13,7 +13,7 @@ struct ProjectAssetCodec {
     std::function<void(const std::filesystem::path&,const Raster&)> writeColor;
     std::function<void(const std::filesystem::path&,const GrayRaster&)> writeGray;
 };
-struct OpenProject { Document document; std::string activeLayer; int readVersion{7}; };
+struct OpenProject { Document document; std::string activeLayer; int readVersion{9}; };
 enum class SaveFaultPoint { AfterStage, AfterJournal, AfterBackup, AfterInstall, BeforeCleanup };
 using SaveFaultInjector=std::function<void(SaveFaultPoint)>;
 class IProjectStore {

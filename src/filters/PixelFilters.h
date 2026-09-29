@@ -4,10 +4,12 @@
 #include <optional>
 #include <string>
 namespace compositor::filters {
-enum class Kind { GaussianBlur,MotionBlur,AddNoise,LensCorrection,ContentAwareFill };
+enum class Kind { GaussianBlur,MotionBlur,AddNoise,LensCorrection,ContentAwareFill,Vignette,BloomGlow,TonalContrast };
 struct Settings {
     double radius{1},angle{0},distance{10},amount{10},distortion{0};
     bool gaussian{},monochromatic{};
+    double vignetteAmount{35},vignetteRed{},vignetteGreen{},vignetteBlue{},vignetteMidpoint{50},vignetteRoundness{100},vignetteFeather{60},vignetteHighlights{25};
+    double bloomAmount{40},bloomRadius{24},tonalAmount{50},tonalRadius{16},tonalShadows{40},tonalMidtones{60},tonalHighlights{30};
     Settings normalized() const;
 };
 struct PixelRect {int x{},y{},width{},height{};bool operator==(const PixelRect&) const=default;};
@@ -25,6 +27,7 @@ struct Request {
     // Preserve the largest padded margin while a preview panel remains open.
     double retainedBlurMargin{};
     Limits limits;
+    bool vignetteFillsClear{};
 };
 struct Result {
     std::shared_ptr<const Raster> raster;Transform transform;
@@ -34,7 +37,7 @@ struct Result {
 double blurMargin(Kind,const Settings&);
 // The direct PixelFilter.run boundary: supplied image is already padded/scaled;
 // optional coverage must match that grid. Output retains dimensions.
-std::shared_ptr<const Raster> runPixels(Kind,const Raster&,const Settings&,double scale,std::uint32_t seed,const GrayRaster* selection=nullptr,const Limits& = {});
+std::shared_ptr<const Raster> runPixels(Kind,const Raster&,const Settings&,double scale,std::uint32_t seed,const GrayRaster* selection=nullptr,const Limits& = {},bool vignetteFillsClear=false);
 // The FilterEdit boundary: grow, prepare preview, run, selection blend, final trim.
 Result apply(const Request&);
 // Reposition a cropped/expanded source grid without moving retained pixels.

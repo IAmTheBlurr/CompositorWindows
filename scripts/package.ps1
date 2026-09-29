@@ -1,4 +1,4 @@
-param([switch]$SkipBuild,[switch]$PortableOnly,[string]$Version='0.1.5')
+param([switch]$SkipBuild,[switch]$PortableOnly,[string]$Version='1.2.11')
 $ErrorActionPreference='Stop'
 $packageRoot=Split-Path $PSScriptRoot -Parent
 if($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'){throw 'Version must be a numeric semantic version'}
@@ -38,6 +38,12 @@ try {
  $modelSource=Join-Path $imaging 'model\birefnet-lite.onnx'
  if((Get-FileHash -LiteralPath $modelSource -Algorithm SHA256).Hash -ine $lock.model.onnx_sha256){throw 'Foreground model checksum mismatch'}
  Copy-Item -LiteralPath $modelSource -Destination (Join-Path $payload 'models')
+ $objectLock=Get-Content -LiteralPath (Join-Path $packageRoot 'dependencies/object-selection.lock.json') -Raw | ConvertFrom-Json
+ foreach($objectModel in $objectLock.files){
+  $objectSource=Join-Path $imaging "model/$($objectModel.name)"
+  if((Get-FileHash -LiteralPath $objectSource -Algorithm SHA256).Hash -ine $objectModel.sha256){throw "Object selection model checksum mismatch: $($objectModel.name)"}
+  Copy-Item -LiteralPath $objectSource -Destination (Join-Path $payload 'models')
+ }
  Copy-Item -LiteralPath (Join-Path $packageRoot 'shaders\BrushCoverage.hlsl') -Destination (Join-Path $payload 'shaders')
  Copy-Item -LiteralPath (Join-Path $packageRoot 'LICENSE') -Destination (Join-Path $payload 'licenses\Compositor-MIT.txt')
  Copy-Item -Path (Join-Path $imaging 'notices\*') -Destination (Join-Path $payload 'licenses') -Recurse
@@ -50,6 +56,17 @@ try {
  $qtSource=Join-Path $packageRoot $qtLock.qt.source.path
  if((Get-FileHash -LiteralPath $qtSource -Algorithm SHA256).Hash -ine $qtLock.qt.source.sha256){throw 'Qt corresponding source checksum mismatch'}
  Copy-Item -LiteralPath $qtSource -Destination (Join-Path $payload 'sources')
+ $importLock=Get-Content -LiteralPath (Join-Path $packageRoot 'dependencies/imports.lock.json') -Raw | ConvertFrom-Json
+ foreach($importProperty in $importLock.PSObject.Properties){
+  $importEntry=$importProperty.Value
+  $importAsset=if($importEntry.source){$importEntry.source}else{$importEntry}
+  $importArchive=Join-Path $packageRoot "dependencies/downloads/$($importAsset.archive)"
+  if((Get-FileHash -LiteralPath $importArchive -Algorithm SHA256).Hash -ine $importAsset.sha256){throw "Import corresponding source mismatch: $($importProperty.Name)"}
+  Copy-Item -LiteralPath $importArchive -Destination (Join-Path $payload 'sources')
+ }
+ Copy-Item -LiteralPath (Join-Path $packageRoot 'dependencies/libraw/LibRaw-0.21.5/COPYRIGHT') -Destination (Join-Path $payload 'licenses/LibRaw-COPYRIGHT.txt')
+ Copy-Item -LiteralPath (Join-Path $packageRoot 'dependencies/libraw/LibRaw-0.21.5/LICENSE.CDDL') -Destination (Join-Path $payload 'licenses/LibRaw-CDDL.txt')
+ Copy-Item -LiteralPath (Join-Path $packageRoot 'dependencies/zlib/zlib-1.3.1/LICENSE') -Destination (Join-Path $payload 'licenses/Zlib-LICENSE.txt')
  foreach($repo in $lock.repositories){
   $archive=Join-Path $imaging "$($repo.name)-$($repo.version)-source.tar"
   if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $repo.source_archive_sha256){throw "Corresponding source mismatch: $($repo.name)"}
@@ -120,11 +137,11 @@ try {
   Copy-Item -LiteralPath $path -Destination $destination
  }
  New-Item -ItemType Directory -Path (Join-Path $source 'scripts'),(Join-Path $source 'docs') | Out-Null
- foreach($script in @('bootstrap.ps1','bootstrap-imaging.ps1','bootstrap-packaging.ps1','deploy-imaging-runtime.cmake','restore-imaging-runtime.ps1','package.ps1')){
+ foreach($script in @('bootstrap.ps1','bootstrap-imaging.ps1','bootstrap-imports.ps1','import-dependencies.cmake','bootstrap-object-selection.ps1','bootstrap-packaging.ps1','deploy-imaging-runtime.cmake','restore-imaging-runtime.ps1','package.ps1')){
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (Join-Path $source 'scripts')
  }
  Copy-ApplicationSource (Join-Path $PSScriptRoot 'msi') (Join-Path $source 'scripts\msi') @('.ps1','.wxs','.json','.txt')
- foreach($doc in @('README.md','source-package.md','packaging.md','user-guide.md','release-notes.md','architecture.md','project-format-v7.md')){
+ foreach($doc in @('README.md','source-package.md','packaging.md','user-guide.md','release-notes.md','architecture.md','project-format.md')){
   $docPath=Join-Path $packageRoot "docs\$doc"
   if(Test-Path -LiteralPath $docPath){Copy-Item -LiteralPath $docPath -Destination (Join-Path $source 'docs')}
  }
@@ -133,7 +150,7 @@ try {
  Copy-ApplicationSource (Join-Path $packageRoot 'docs/images') (Join-Path $source 'docs/images') @('.png')
  New-Item -ItemType Directory -Path (Join-Path $source 'demo') -Force | Out-Null
  Copy-Item -LiteralPath (Join-Path $packageRoot 'demo/README.md') -Destination (Join-Path $source 'demo/README.md')
- foreach($fixture in @('tests/display_profile/fixtures/linear-rgb.icc','tests/display_profile/fixtures/manifest.json','tests/imaging/quality_criteria.json')){
+ foreach($fixture in @('tests/display_profile/fixtures/linear-rgb.icc','tests/display_profile/fixtures/manifest.json','tests/imaging/quality_criteria.json','tests/session1211/objects-scene.png','tests/session1211/touching-objects.png','tests/session1211/README.md')){
   $destination=Join-Path $source $fixture
   New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $packageRoot $fixture) -Destination $destination
@@ -143,6 +160,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $packageRoot "dependencies\$dir\lock.json") -Destination (Join-Path $source "dependencies\$dir")
  }
  Copy-Item -LiteralPath (Join-Path $imaging 'model-requirements.hashes.txt') -Destination (Join-Path $source 'dependencies\imaging')
+ Copy-Item -LiteralPath (Join-Path $packageRoot 'dependencies/imports.lock.json') -Destination (Join-Path $source 'dependencies/imports.lock.json')
+ Copy-Item -LiteralPath (Join-Path $packageRoot 'dependencies/object-selection.lock.json') -Destination (Join-Path $source 'dependencies/object-selection.lock.json')
  Copy-Item -LiteralPath (Join-Path $packageRoot 'dependencies\packaging\notices') -Destination (Join-Path $source 'dependencies\packaging\notices') -Recurse
  $sourceArchive=Join-Path $output "CompositorWindows-$Version-source.zip"
  Compress-Archive -Path (Join-Path $source '*') -DestinationPath $sourceArchive -CompressionLevel Optimal
@@ -151,7 +170,7 @@ try {
  Copy-Item -LiteralPath (Join-Path $packageRoot 'docs\user-guide.md') -Destination (Join-Path $payload 'USER-GUIDE.md')
  Copy-Item -LiteralPath (Join-Path $packageRoot 'docs\release-notes.md') -Destination (Join-Path $payload 'RELEASE-NOTES.md')
  $encoding=[Text.UTF8Encoding]::new($false)
- $policy=[ordered]@{schema=1;channel='community-preview';automaticUpdates=$false;upstream='a19db9011282399785dc18efcfded904627bdcc2'}
+ $policy=[ordered]@{schema=1;channel='community-preview';automaticUpdates=$false;upstream='0ecbacfff8610b566eda059fb2644fddf337fb65'}
  [IO.File]::WriteAllText((Join-Path $payload 'release-policy.json'),($policy|ConvertTo-Json),$encoding)
  $readme=@"
 Compositor Windows $Version preview
@@ -161,7 +180,7 @@ Read RELEASE-NOTES.md, USER-GUIDE.md and KNOWN-ISSUES.md. Save projects outside 
 Updates are manual: install a newer MSI or extract a newer portable download into a new directory.
 This build is unsigned. Windows may show a publisher warning. Keep Windows security enabled and obtain releases from the published project links.
 Independent port of Compositor by Robbie Tilton: https://github.com/robbietilton/Compositor
-Baseline a19db9011282399785dc18efcfded904627bdcc2 (1.0.4); no upstream endorsement or complete Mac parity is claimed.
+Editing/project target 0ecbacfff8610b566eda059fb2644fddf337fb65 (1.2.11); original port baseline a19db9011282399785dc18efcfded904627bdcc2 (1.0.4). No upstream endorsement or identical Mac rendering is claimed.
 Licenses and corresponding sources are in licenses and sources.
 "@
  [IO.File]::WriteAllText((Join-Path $portable 'README.txt'),$readme,$encoding)

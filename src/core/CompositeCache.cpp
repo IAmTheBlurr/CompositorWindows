@@ -20,7 +20,8 @@ Bounds bounds(const Transform& transform,double x,double y,double width,double h
 std::vector<Bounds> paintedBounds(const Document& doc,double units=1,const LayerRenderPreview* preview=nullptr){
     std::unordered_map<std::string,const Layer*> byId;for(const auto& layer:doc.layers)byId.emplace(layer.id,&layer);
     std::vector<Bounds> result;
-    for(const auto& layer:doc.layers){if(!layer.raster||!layer.visible||layer.opacity==0)continue;bool visible=true;auto parent=layer.parentId;while(!parent.empty()){auto ancestor=byId.at(parent);if(!ancestor->visible){visible=false;break;}parent=ancestor->parentId;}if(visible){auto source=preview&&preview->layer.id==layer.id&&preview->imageSource?preview->imageSource:graphics::samplingSource(layer.raster);const int level=layer.transform.sampling==Transform::Sampling::Nearest?0:graphics::DownsampleCache::levelFor(layer.transform.width/(units*source->width));auto grid=graphics::samplingGrid(*source,level);result.push_back(bounds(layer.transform,double(grid.x)/source->width,double(grid.y)/source->height,double(grid.width*grid.step)/source->width,double(grid.height*grid.step)/source->height));}}
+    for(const auto& layer:doc.layers){if(!layer.raster||!layer.visible||layer.opacity==0)continue;bool visible=true;auto parent=layer.parentId;while(!parent.empty()){auto ancestor=byId.at(parent);if(!ancestor->visible){visible=false;break;}parent=ancestor->parentId;}if(visible){if(!layer.effectsJson.empty())return {{-10000000,-10000000,10000000,10000000}};auto source=preview&&preview->layer.id==layer.id&&preview->imageSource?preview->imageSource:graphics::samplingSource(layer.raster);const int level=layer.transform.sampling==Transform::Sampling::Nearest?0:graphics::DownsampleCache::levelFor(layer.transform.width/(units*source->width));auto grid=graphics::samplingGrid(*source,level);result.push_back(bounds(layer.transform,double(grid.x)/source->width,double(grid.y)/source->height,double(grid.width*grid.step)/source->width,double(grid.height*grid.step)/source->height));}}
+    if(!result.empty())for(const auto& layer:doc.layers)if(layer.visible&&!layer.adjustmentJson.empty()){bool visible=true;auto parent=layer.parentId;while(!parent.empty()){auto ancestor=byId.at(parent);if(!ancestor->visible){visible=false;break;}parent=ancestor->parentId;}if(visible)return {{-10000000,-10000000,10000000,10000000}};}
     return result;
 }
 bool touches(const std::vector<Bounds>& painted,double x,double y,double width,double height){return std::any_of(painted.begin(),painted.end(),[&](Bounds b){return b.right>x&&b.bottom>y&&b.left<x+width&&b.top<y+height;});}
@@ -47,14 +48,14 @@ Point filterHalo(const LayerRenderPreview& preview,double units){
 std::shared_ptr<const Raster> directRaster(const Document& doc){
     if(doc.layers.size()!=1)return {};const auto& layer=doc.layers.front();
     if(layer.visible&&!layer.group&&layer.raster&&layer.raster->width==doc.width&&layer.raster->height==doc.height&&
-       layer.opacity==1&&layer.blend==Blend::Normal&&!layer.mask&&layer.parentId.empty()&&layer.maskSourceId.empty()&&layer.adjustmentJson.empty()&&
+       layer.opacity==1&&layer.blend==Blend::Normal&&!layer.mask&&layer.parentId.empty()&&layer.maskSourceId.empty()&&layer.adjustmentJson.empty()&&layer.effectsJson.empty()&&
        layer.transform.x==0&&layer.transform.y==0&&layer.transform.width==doc.width&&layer.transform.height==doc.height&&layer.transform.rotation==0&&!layer.transform.flipX&&!layer.transform.flipY)return layer.raster;
     return {};
 }
 std::vector<uint8_t> invalidTiles(const std::optional<Document>& previous,const Document& doc,double units,int columns,int rows){
     std::vector<uint8_t> dirty(size_t(columns)*rows,0);auto invalidateAll=[&]{std::fill(dirty.begin(),dirty.end(),uint8_t(1));};
     if(!previous||previous->width!=doc.width||previous->height!=doc.height||previous->layers.size()!=doc.layers.size()){invalidateAll();return dirty;}
-    bool dependent=std::any_of(doc.layers.begin(),doc.layers.end(),[](const Layer& layer){return !layer.maskSourceId.empty()||!layer.adjustmentJson.empty();});
+    bool dependent=std::any_of(doc.layers.begin(),doc.layers.end(),[](const Layer& layer){return !layer.maskSourceId.empty()||!layer.adjustmentJson.empty()||!layer.effectsJson.empty();});
     for(size_t i=0;i<doc.layers.size();++i){const auto& before=previous->layers[i];const auto& after=doc.layers[i];if(before==after)continue;auto metadata=before;metadata.raster=after.raster;
         if(metadata!=after||!before.raster||!after.raster||before.raster->width!=after.raster->width||before.raster->height!=after.raster->height||before.raster->samplingOriginX!=after.raster->samplingOriginX||before.raster->samplingOriginY!=after.raster->samplingOriginY||dependent||
            (after.transform.sampling!=Transform::Sampling::Nearest&&graphics::DownsampleCache::levelFor(after.transform.width/(units*after.raster->width))>0)){invalidateAll();return dirty;}
@@ -112,7 +113,7 @@ CompositeViewport CompositeCache::renderViewport(const Document& input,double x,
     result.unitsPerPixel=units;result.documentX=px+tx0*256*units;result.documentY=py+ty0*256*units;
     bool all=viewportUnits_!=units||viewportPhaseX_!=px||viewportPhaseY_!=py;
     std::vector<Bounds> damage;
-    const bool dependent=std::any_of(doc.layers.begin(),doc.layers.end(),[](const Layer& layer){return !layer.maskSourceId.empty()||!layer.adjustmentJson.empty();});
+    const bool dependent=std::any_of(doc.layers.begin(),doc.layers.end(),[](const Layer& layer){return !layer.maskSourceId.empty()||!layer.adjustmentJson.empty()||!layer.effectsJson.empty();});
     // Compare canonical documents independently from transient preview metadata.
     // Only retained output entries will be checked against these damage bounds.
     if(!viewportPrevious_||viewportPrevious_->width!=input.width||viewportPrevious_->height!=input.height||viewportPrevious_->layers.size()!=input.layers.size())all=true;

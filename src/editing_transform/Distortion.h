@@ -12,6 +12,8 @@ struct Homography {
     static Homography fromCorners(const Corners&);
 };
 Corners carriedCorners(const Transform& placement,const Transform& enclosing,const Corners& target);
+Point distortedUnitPoint(const Corners&,Point unit);
+std::array<std::optional<Point>,2> foldedUnitSamples(const Corners&,Point documentPoint);
 struct WarpOptions {int longestSide{};bool trim{};CancelCheck cancelled;};
 struct RasterWarp {std::shared_ptr<const Raster> raster;Transform transform;Rect crop;};
 struct GrayWarp {std::shared_ptr<const GrayRaster> raster;Transform transform;};

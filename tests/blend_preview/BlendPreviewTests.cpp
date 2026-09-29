@@ -40,24 +40,24 @@ struct Fixture {
 void hoverCancel(){
     Fixture f;const auto before=f.project.document;const auto ordinary=f.visible();auto expected=*before;expected.layers.back().blend=Blend::Multiply;
     const auto multiply=SoftwareRenderer().render(expected,0,0,16,16)->pixel(8,8);require(multiply!=ordinary,"fixture does not distinguish blend preview");
-    f.hover(int(Blend::Multiply));require(f.project.document==before&&f.project.history.undoCount()==0&&!f.project.history.modified(),"hover changed canonical document/history");
+    f.hover(f.combo->findData(int(Blend::Multiply)));require(f.project.document==before&&f.project.history.undoCount()==0&&!f.project.history.modified(),"hover changed canonical document/history");
     require(f.visible()==multiply,"hover did not render the highlighted blend");f.escape();
     require(f.project.document==before&&f.visible()==ordinary&&f.project.history.undoCount()==0,"popup cancellation did not restore original rendering");
 }
 void commitOnce(){
-    Fixture f;const auto before=f.project.document;f.hover(int(Blend::Multiply));f.hover(int(Blend::Screen));
-    require(f.project.history.undoCount()==0,"preview created history entries");f.choose(int(Blend::Screen));
+    Fixture f;const auto before=f.project.document;f.hover(f.combo->findData(int(Blend::Multiply)));f.hover(f.combo->findData(int(Blend::Screen)));
+    require(f.project.history.undoCount()==0,"preview created history entries");f.choose(f.combo->findData(int(Blend::Screen)));
     require(f.project.document->layers.back().blend==Blend::Screen&&f.project.history.undoCount()==1,"selection must commit exactly one blend edit");
     undo(f.window);require(f.project.document==before,"blend undo did not restore exact document");
 }
 void noopPreservesRedo(){
-    Fixture f;f.combo->setCurrentIndex(int(Blend::Multiply));undo(f.window);
-    require(f.project.history.canRedo(),"fixture redo missing");f.hover(int(Blend::Screen));f.escape();
+    Fixture f;f.combo->setCurrentIndex(f.combo->findData(int(Blend::Multiply)));undo(f.window);
+    require(f.project.history.canRedo(),"fixture redo missing");f.hover(f.combo->findData(int(Blend::Screen)));f.escape();
     require(f.project.history.canRedo()&&f.project.history.undoCount()==0,"cancelled hover destroyed redo");
-    f.hover(int(Blend::Normal));f.choose(int(Blend::Normal));require(f.project.history.canRedo()&&f.project.history.undoCount()==0,"choosing canonical mode destroyed redo");
+    f.hover(f.combo->findData(int(Blend::Normal)));f.choose(f.combo->findData(int(Blend::Normal)));require(f.project.history.canRedo()&&f.project.history.undoCount()==0,"choosing canonical mode destroyed redo");
 }
 void targetGuard(){
-    Fixture f;const auto canonical=f.project.document;f.hover(int(Blend::Multiply));
+    Fixture f;const auto canonical=f.project.document;f.hover(f.combo->findData(int(Blend::Multiply)));
     f.project.active="base";f.project.selected={"base"};
     const auto expected=SoftwareRenderer().render(*canonical,0,0,16,16)->pixel(8,8);
     require(f.visible()==expected,"preview followed an unrelated active layer");f.escape();

@@ -1,6 +1,9 @@
 #include "ImportActions.h"
 #include "imaging/wic_codec.h"
 #include "imaging/heif_codec.h"
+#include "imaging/psd_codec.h"
+#include "imaging/svg_codec.h"
+#include "imaging/raw_codec.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -12,11 +15,14 @@
 
 namespace compositor::ui {
 imaging::DecodedImage decodeImportImage(const std::filesystem::path& path,const imaging::ImportOptions& options){
+    if(imaging::RawFrame::matches(path))return imaging::RawFrame(path,options).develop({},false,options);
+    if(QString::fromStdWString(path.extension().wstring()).compare(".svg",Qt::CaseInsensitive)==0)return imaging::decodeSvg(path,{},options);
     QFile file(QString::fromStdWString(path.wstring()));
     if(!file.open(QIODevice::ReadOnly))throw std::runtime_error("Cannot open image");
     const auto signature=file.read(16);file.close();
-    return signature.size()>=12&&signature.mid(4,4)=="ftyp"
-        ?imaging::HeifCodec::decode(path,options):imaging::WicCodec::decode(path,options);
+    if(signature.size()>=12&&signature.mid(4,4)=="ftyp")return imaging::HeifCodec::decode(path,options);
+    if(!signature.startsWith("\x89PNG")&&!signature.startsWith("\xff\xd8")&&!signature.startsWith("II")&&!signature.startsWith("MM"))throw std::runtime_error("Choose a PNG, JPEG, TIFF, HEIC, SVG, Photoshop, or supported camera RAW image");
+    return imaging::WicCodec::decode(path,options);
 }
 ImportResult prepareImportBatch(ImportState state,const ImportBatch& batch,const ImportDecoder& decode,imaging::ImportOptions options){
     if(!decode)throw std::invalid_argument("Image decoder is required");
@@ -24,19 +30,32 @@ ImportResult prepareImportBatch(ImportState state,const ImportBatch& batch,const
     if(batch.point&&(!std::isfinite(batch.point->x)||!std::isfinite(batch.point->y)))throw std::invalid_argument("Invalid image drop point");
     ImportResult result;result.before=state;result.after=std::move(state);
     const auto point=result.before.document?batch.point:std::nullopt;
-    const auto budget=std::min<uint64_t>(options.remainingPixels,100000000);
+    const auto budget=options.remainingPixels==imaging::ImportOptions{}.remainingPixels?limits::documentPixels():std::min<uint64_t>(options.remainingPixels,limits::documentPixels());
     auto cancelled=[&]{return options.cancelled&&options.cancelled();};
     for(const auto& path:batch.files){
         if(cancelled()){result.cancelled=true;break;}
+        auto previous=result.after;const auto previousGroups=result.expandedGroups.size();const auto previousConversions=result.conversions.size();
         try{
-            uint64_t used=0;
+            uint64_t used=0,usedMasks=0;
             if(result.after.document)for(const auto& layer:result.after.document->layers)if(layer.raster){
                 const auto pixels=uint64_t(layer.raster->width)*layer.raster->height;
-                if(pixels>budget||used>budget-pixels)throw std::runtime_error("This project exceeds the 100-megapixel import budget");
+                if(pixels>budget||used>budget-pixels)throw std::runtime_error("This project exceeds the image import pixel budget");
                 used+=pixels;
             }
-            options.remainingPixels=budget-used;
-            auto decoded=decode(path,options);imaging::checkCancelled(options);
+            if(result.after.document)for(const auto& layer:result.after.document->layers)if(layer.mask&&layer.mask->raster){const auto pixels=uint64_t(layer.mask->raster->width)*layer.mask->raster->height;if(pixels>budget||usedMasks>budget-pixels)throw std::runtime_error("This project exceeds the mask import pixel budget");usedMasks+=pixels;}options.remainingPixels=budget-used;options.remainingMaskPixels=budget-usedMasks;
+            const auto extension=QString::fromStdWString(path.extension().wstring()).toLower();
+            QFile signatureFile(QString::fromStdWString(path.wstring()));QByteArray magic;if(signatureFile.open(QIODevice::ReadOnly))magic=signatureFile.read(4);
+            if(magic=="8BPS"||extension==".psd"||extension==".psb"){
+                auto imported=imaging::decodePhotoshop(path,options);imaging::checkCancelled(options);
+                if(!result.after.document){result.after.document=std::move(imported.document);if(!result.after.document->layers.empty())result.after.active=result.after.document->layers.back().id;}
+                else{auto& document=*result.after.document;Layer folder;folder.id=newId();folder.group=true;folder.name=QFileInfo(QString::fromStdWString(path.wstring())).completeBaseName().toUtf8().toStdString();folder.transform={0,0,double(document.width),double(document.height)};for(const auto& active:document.layers)if(active.id==result.after.active){folder.parentId=active.group?active.id:active.parentId;break;}const auto center=point.value_or(Point{document.width/2.,document.height/2.});const auto dx=std::floor(center.x-imported.document.width/2.),dy=std::floor(center.y-imported.document.height/2.);for(auto& layer:imported.document.layers){if(layer.parentId.empty())layer.parentId=folder.id;layer.transform.x+=dx;layer.transform.y+=dy;if(layer.mask&&layer.mask->placement){layer.mask->placement->x+=dx;layer.mask->placement->y+=dy;}document.layers.push_back(std::move(layer));}result.after.active=folder.id;result.expandedGroups.push_back(folder.id);document.layers.push_back(std::move(folder));}
+                validateDocument(*result.after.document);result.conversions.append(imported.conversions);++result.imported;continue;
+            }
+            imaging::DecodedImage decoded;
+            if(auto prepared=batch.developed.find(path);prepared!=batch.developed.end())decoded=*prepared->second;
+            else if(extension==".svg")decoded=imaging::decodeSvg(path,result.after.document?std::optional(std::pair{result.after.document->width,result.after.document->height}):std::nullopt,options);
+            else decoded=decode(path,options);
+            imaging::checkCancelled(options);
             imaging::checkedBytes(decoded.image.width,decoded.image.height,4,options);imaging::validate(decoded.image);
             auto raster=Raster::fromRgba(int(decoded.image.width),int(decoded.image.height),decoded.image.pixels.data(),decoded.image.stride);
             if(!result.after.document){Document document;document.id=newId();document.width=raster->width;document.height=raster->height;result.after.document=std::move(document);}
@@ -46,14 +65,15 @@ ImportResult prepareImportBatch(ImportState state,const ImportBatch& batch,const
             layer.transform={std::floor(center.x-layer.raster->width/2.),std::floor(center.y-layer.raster->height/2.),double(layer.raster->width),double(layer.raster->height)};
             for(const auto& active:document.layers)if(active.id==result.after.active){layer.parentId=active.group?active.id:active.parentId;break;}
             if(!layer.parentId.empty())result.expandedGroups.push_back(layer.parentId);
-            result.after.active=layer.id;document.layers.push_back(std::move(layer));++result.imported;
+            result.after.active=layer.id;document.layers.push_back(std::move(layer));validateDocument(document);++result.imported;
         }catch(const std::exception& error){
+            result.after=std::move(previous);result.expandedGroups.resize(previousGroups);result.conversions.resize(previousConversions);
             if(cancelled()){result.cancelled=true;break;}
             result.errors.append(QString::fromStdWString(path.filename().wstring())+": "+QString::fromUtf8(error.what()));
         }
     }
     if(cancelled())result.cancelled=true;
-    if(result.cancelled){result.after=result.before;result.imported=0;result.expandedGroups.clear();result.errors.clear();}
+    if(result.cancelled){result.after=result.before;result.imported=0;result.expandedGroups.clear();result.errors.clear();result.conversions.clear();}
     if(result.after.document)validateDocument(*result.after.document);
     return result;
 }
@@ -71,9 +91,9 @@ ImportQueue::ImportQueue(Host host,QObject* parent,ImportDecoder decoder):QObjec
     connect(&impl_->watcher,&QFutureWatcher<ImportResult>::finished,this,[this]{
         auto& p=*impl_;if(!p.running)return;p.finishing=true;auto request=std::move(*p.running);p.running.reset();
         auto result=p.watcher.result();
-        if(p.cancellation->load()){result.cancelled=true;result.after=result.before;result.imported=0;result.errors.clear();}
+        if(p.cancellation->load()){result.cancelled=true;result.after=result.before;result.imported=0;result.errors.clear();result.conversions.clear();}
         if(request.target){
-            if(result.changed())try{p.host.commit(request.target,result);}catch(const std::exception& error){result.imported=0;result.after=result.before;result.errors.append(QString::fromUtf8(error.what()));}
+            if(result.changed())try{p.host.commit(request.target,result);}catch(const std::exception& error){result.imported=0;result.after=result.before;result.conversions.clear();result.errors.append(QString::fromUtf8(error.what()));}
             p.host.busy(request.target,false);p.host.completed(request.target,result);
         }
         p.cancellation.reset();p.finishing=false;QTimer::singleShot(0,this,[this]{drain();});

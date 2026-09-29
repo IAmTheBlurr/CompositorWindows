@@ -6,4 +6,5 @@ namespace compositor::ui {
 // The system-specific SF Symbols are replaced by recognizable local vector artwork;
 // badge geometry and polygon coordinates preserve the pinned source definition.
 QCursor selectionToolCursor(editing::LassoKind kind,editing::SelectionMode mode,qreal deviceScale);
+QCursor objectSelectionCursor(editing::SelectionMode mode,qreal deviceScale);
 }

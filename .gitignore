@@ -2,6 +2,8 @@ build/
 /dist/
 /dependencies/downloads/
 /dependencies/qt/
+/dependencies/libraw/
+/dependencies/zlib/
 /dependencies/imaging/**
 !/dependencies/imaging/lock.json
 !/dependencies/imaging/model-requirements.hashes.txt
@@ -65,3 +67,14 @@ CMakeFiles/
 *.idb
 *.tlog
 *.VC.db
+
+# Deliberate original object-selection fixture. Recovered historical tensor caches stay local.
+!/tests/session1211/objects-scene.png
+/tests/imaging/input_resize42/fixtures-02/**/*.f32
+/tests/imaging/input_resize42/fixtures-02/**/*.rgb
+
+/tests/**/fixtures/**/*.ini
+
+/tests/project_open_batch/fixtures/before-*/
+
+!/tests/session1211/touching-objects.png

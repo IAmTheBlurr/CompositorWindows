@@ -42,10 +42,11 @@ void MainWindow::setupDrawingActions(){
     auto*style=new QComboBox;style->setObjectName("gradientStyle");style->addItems({"Foreground to Background","Foreground to Transparent"});style->setCurrentIndex(1);bar->addWidget(style);connect(style,&QComboBox::currentIndexChanged,this,[this](int i){gradientSettings_.style=editing::GradientStyle(i);refreshGradient();});
     auto*reverse=new QCheckBox("Reverse");reverse->setObjectName("gradientReverse");bar->addWidget(reverse);connect(reverse,&QCheckBox::toggled,this,[this](bool v){gradientSettings_.reversed=v;refreshGradient();});auto*opacity=new ui::PropertyNumber;opacity->releaseFocus=[this]{if(canvas())canvas()->setFocus();};opacity->setRange(1,100);opacity->setValue(100);opacity->setSuffix("%");opacity->setAccessibleName("Gradient opacity");bar->addWidget(opacity);connect(opacity,&QDoubleSpinBox::valueChanged,this,[this](double v){gradientSettings_.opacity=v/100;refreshGradient();});
     auto*cancel=bar->addAction("Cancel Gradient");cancel->setObjectName("cancelGradient");bindCommand(cancel,"Drawing Options","Cancel Gradient",[this]{cancelGradient();});cancel->setShortcut({});auto*apply=bar->addAction("Apply Gradient");apply->setObjectName("applyGradient");bindCommand(apply,"Drawing Options","Apply Gradient",[this]{applyGradient();});apply->setShortcut({});
-    auto*shape=bar->addAction("Shape (U)");bindCommand(shape,"Tools","Shape (U)",[this]{selectTool(Tool::Shape);refresh(false);});shape->setShortcut({});auto*kind=new QComboBox;kind->setObjectName("shapeKind");kind->addItems({"Rectangle","Ellipse"});bar->addWidget(kind);connect(kind,&QComboBox::currentIndexChanged,this,[this](int i){if(refreshing_)return;cancelShape();shapeStyle_.kind=editing::ShapeKind(i);refresh(false,false);});
+    auto*shape=bar->addAction("Shape (U)");bindCommand(shape,"Tools","Shape (U)",[this]{selectTool(Tool::Shape);refresh(false);});shape->setShortcut({});auto*kind=new QComboBox;kind->setObjectName("shapeKind");kind->addItems({"Rectangle","Ellipse","Line"});bar->addWidget(kind);connect(kind,&QComboBox::currentIndexChanged,this,[this](int i){if(refreshing_)return;cancelShape();shapeStyle_.kind=editing::ShapeKind(i);refresh(false,false);});
     auto*radius=new ui::PropertyNumber;radius->releaseFocus=[this]{if(canvas())canvas()->setFocus();};radius->setObjectName("shapeCornerRadius");radius->setRange(0,5000);radius->setDecimals(0);radius->setAccessibleName("Corner radius");radius->setSuffix(" px radius");bar->addWidget(radius);connect(radius,&QDoubleSpinBox::valueChanged,this,[this](double v){shapeStyle_.cornerRadius=v;});
-    auto*restyle=bar->addAction("Update Shape Style");bindCommand(restyle,"Drawing Options","Update Shape Style",[this]{if(!active()||active()->shapeJson.empty())return;edit("Shape Style",[&](Document&){auto style=shapeStyle_;style.red=foreground_.redF();style.green=foreground_.greenF();style.blue=foreground_.blueF();*active()=editing::restyleShape(*active(),style);});});
-    auto*cropRatioControl=new QComboBox;cropRatioControl->setObjectName("cropRatioChoice");cropRatioControl->setAccessibleName("Crop ratio");cropRatioControl->addItems({"Free","Original","1:1","4:3","16:9"});bar->addWidget(cropRatioControl);
+    auto*lineWidth=new ui::PropertyNumber;lineWidth->releaseFocus=[this]{if(canvas())canvas()->setFocus();};lineWidth->setObjectName("shapeLineWidth");lineWidth->setAccessibleName("Line width");lineWidth->setRange(1,5000);lineWidth->setDecimals(1);lineWidth->setValue(shapeStyle_.lineWidth.value_or(4));lineWidth->setSuffix(" px width");bar->addWidget(lineWidth);connect(lineWidth,&QDoubleSpinBox::valueChanged,this,[this](double value){shapeStyle_.lineWidth=value;});
+    auto*restyle=bar->addAction("Update Shape Style");bindCommand(restyle,"Drawing Options","Update Shape Style",[this]{if(!active()||active()->shapeJson.empty())return;edit("Shape Style",[&](Document&){auto style=shapeStyle_;if(style.kind==editing::ShapeKind::Line){const auto original=editing::decodeShapeStyle(active()->shapeJson);if(original.kind==editing::ShapeKind::Line){style.start=original.start;style.end=original.end;}style.lineWidth=shapeStyle_.lineWidth.value_or(4);}style.red=foreground_.redF();style.green=foreground_.greenF();style.blue=foreground_.blueF();*active()=editing::restyleShape(*active(),style);});});
+    auto*cropRatioControl=new QComboBox;cropRatioControl->setObjectName("cropRatioChoice");cropRatioControl->setAccessibleName("Crop ratio");cropRatioControl->addItems({"Free","Original","1:1","4:3","3:4","16:9","9:16"});bar->addWidget(cropRatioControl);
     connect(cropRatioControl,&QComboBox::currentTextChanged,this,[this](const QString& value){if(refreshing_)return;cropRatioChoice_=value;changeCropRatio();});
     auto* dimensions=new QLabel;dimensions->setObjectName("cropDimensions");bar->addWidget(dimensions);bar->addAction(cropCancel);bar->addAction(cropApply);
     auto*background=bar->addAction("Background Color");bindCommand(background,"Tools","Background",[this]{openPalette(true);});background->setShortcut({});
@@ -60,12 +61,13 @@ bool MainWindow::beginDrawing(Point point,Qt::KeyboardModifiers){
         if(hit){drag.mode=editing::CropDrag::Mode::Resize;drag.handle=*hit;}
         else if(cropDraft_&&*cropDraft_!=full&&point.x>=cropDraft_->x&&point.x<cropDraft_->x+cropDraft_->width&&point.y>=cropDraft_->y&&point.y<cropDraft_->y+cropDraft_->height)drag.mode=editing::CropDrag::Mode::Move;
         if(drag.mode==editing::CropDrag::Mode::Create)cropDraft_.reset();
-        cropDrag_=drag;cropSnap_=editing::cropSnapTargets(*p->document,8/std::max(canvas()->pointsPerPixel(),.0001));refresh(false,false);return true;
+        cropDrag_=drag;auto targets=alignmentTargets({},false);cropSnap_=editing::CropSnap{std::move(targets.xs),std::move(targets.ys),8/std::max(canvas()->pointsPerPixel(),.0001)};refresh(false,false);return true;
     }
     if(tool_==Tool::Gradient){beginGradient(point);return true;}
     if(!canEditLayers()||!std::isfinite(point.x)||!std::isfinite(point.y))return true;
     press_={std::round(point.x),std::round(point.y)};shapeDraftId_=newId();shapeDraftStyle_=shapeStyle_;
-    if(shapeDraftStyle_.kind==editing::ShapeKind::Ellipse)shapeDraftStyle_.cornerRadius=0;
+    if(shapeDraftStyle_.kind!=editing::ShapeKind::Rectangle)shapeDraftStyle_.cornerRadius=0;
+    if(shapeDraftStyle_.kind==editing::ShapeKind::Line)shapeDraftStyle_.lineWidth=shapeStyle_.lineWidth.value_or(4);shapeLineEnd_.reset();
     shapeDraftRect_=editing::Rect{press_.x,press_.y,0,0};refresh(false,false);return true;
 }
 bool MainWindow::updateDrawing(Point point,Qt::KeyboardModifiers modifiers,bool finish){
@@ -82,12 +84,13 @@ bool MainWindow::updateDrawing(Point point,Qt::KeyboardModifiers modifiers,bool 
     }
     if(tool_==Tool::Gradient){updateGradient(point,modifiers,finish);return true;}
     if(shapeDraftId_.empty()||!std::isfinite(point.x)||!std::isfinite(point.y))return true;
-    shapeDraftRect_=editing::dragBox(press_,point,modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::AltModifier));
+    if(shapeDraftStyle_.kind==editing::ShapeKind::Line){shapeLineEnd_=editing::snappedLineEnd(press_,point,modifiers.testFlag(Qt::ShiftModifier));shapeDraftRect_=editing::lineShapeBounds(press_,*shapeLineEnd_,shapeDraftStyle_.lineWidth.value_or(4));}
+    else shapeDraftRect_=editing::dragBox(press_,point,modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::AltModifier));
     if(!finish){refresh(false,false);return true;}
-    const auto rect=*shapeDraftRect_;auto style=shapeDraftStyle_;cancelShape();
+    const auto rect=*shapeDraftRect_;auto style=shapeDraftStyle_;const auto lineEnd=shapeLineEnd_;cancelShape();
     if(!canEditLayers()||rect.width<1||rect.height<1){refresh(false,false);return true;}
     style.red=foreground_.redF();style.green=foreground_.greenF();style.blue=foreground_.blueF();
-    auto layer=editing::createShapeLayer(rect,style,editing::nextShapeName(*p->document,style.kind));
+    auto layer=style.kind==editing::ShapeKind::Line?editing::createLineLayer(press_,lineEnd.value_or(press_),style,editing::nextShapeName(*p->document,style.kind)):editing::createShapeLayer(rect,style,editing::nextShapeName(*p->document,style.kind));
     if(!layer){refresh(false,false);return true;}
     // SelectionClipboard.addPixelLayer inserts immediately above the active
     // record, including a folder's record; it keeps the existing selection.
@@ -97,22 +100,23 @@ bool MainWindow::updateDrawing(Point point,Qt::KeyboardModifiers modifiers,bool 
     auto selected=std::vector<std::string>{layer->id};auto activeId=layer->id;
     next.layers.insert(next.layers.begin()+insertion,std::move(*layer));validateDocument(next);
     auto previousSelected=p->selected;const bool previousMask=p->maskSelected;finishOpacityEdit();
-    try{edit(style.kind==editing::ShapeKind::Rectangle?"Rectangle":"Ellipse",[&](Document& document){document=std::move(next);p->active=std::move(activeId);p->selected=std::move(selected);p->maskSelected=false;});}
+    try{edit(style.kind==editing::ShapeKind::Rectangle?"Rectangle":style.kind==editing::ShapeKind::Ellipse?"Ellipse":"Line",[&](Document& document){document=std::move(next);p->active=std::move(activeId);p->selected=std::move(selected);p->maskSelected=false;});}
     catch(...){p->selected=std::move(previousSelected);p->maskSelected=previousMask;throw;}
     return true;
 }
-void MainWindow::cancelShape(){shapeDraftId_.clear();shapeDraftRect_.reset();if(canvas())canvas()->setShapeDraft({});}
+void MainWindow::cancelShape(){shapeDraftId_.clear();shapeDraftRect_.reset();shapeLineEnd_.reset();if(canvas())canvas()->setShapeDraft({});}
 void MainWindow::refreshShapeControls(){
     if(auto* kind=findChild<QComboBox*>("shapeKind")){const QSignalBlocker block(kind);kind->setCurrentIndex(int(shapeStyle_.kind));kind->setVisible(tool_==Tool::Shape);}
     if(auto* radius=findChild<QDoubleSpinBox*>("shapeCornerRadius")){const QSignalBlocker block(radius);ui::synchronizeNumber(radius,shapeStyle_.cornerRadius);radius->setVisible(tool_==Tool::Shape&&shapeStyle_.kind==editing::ShapeKind::Rectangle);}
+    if(auto* width=findChild<QDoubleSpinBox*>("shapeLineWidth")){const QSignalBlocker block(width);ui::synchronizeNumber(width,shapeStyle_.lineWidth.value_or(4));width->setVisible(tool_==Tool::Shape&&shapeStyle_.kind==editing::ShapeKind::Line);}
     if(!canvas())return;std::optional<NativeCanvas::ShapeDraftOverlay> overlay;
     if(tool_==Tool::Shape&&!shapeDraftId_.empty()&&shapeDraftRect_&&shapeDraftRect_->width>0&&shapeDraftRect_->height>0)
-        overlay=NativeCanvas::ShapeDraftOverlay{*shapeDraftRect_,shapeDraftStyle_.kind,shapeDraftStyle_.cornerRadius,{uint8_t(foreground_.red()),uint8_t(foreground_.green()),uint8_t(foreground_.blue()),255}};
+        overlay=NativeCanvas::ShapeDraftOverlay{*shapeDraftRect_,shapeDraftStyle_.kind,shapeDraftStyle_.cornerRadius,{uint8_t(foreground_.red()),uint8_t(foreground_.green()),uint8_t(foreground_.blue()),255},press_,shapeLineEnd_,shapeDraftStyle_.lineWidth.value_or(4)};
     canvas()->setShapeDraft(std::move(overlay));
 }
 std::optional<double> MainWindow::cropRatio() {
     if(cropRatioChoice_=="Original"){auto* p=current();if(p&&p->document)return double(p->document->width)/p->document->height;}
-    else if(cropRatioChoice_=="1:1")return 1.;else if(cropRatioChoice_=="4:3")return 4./3.;else if(cropRatioChoice_=="16:9")return 16./9.;return {};
+    else if(cropRatioChoice_=="1:1")return 1.;else if(cropRatioChoice_=="4:3")return 4./3.;else if(cropRatioChoice_=="3:4")return 3./4.;else if(cropRatioChoice_=="16:9")return 16./9.;else if(cropRatioChoice_=="9:16")return 9./16.;return {};
 }
 void MainWindow::changeCropRatio(){
     auto* p=current();if(tool_!=Tool::Crop||!p||!p->document)return;auto ratio=cropRatio();if(!ratio)return;

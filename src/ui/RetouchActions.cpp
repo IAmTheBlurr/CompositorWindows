@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 #include "MainWindow.h"
 #include "PropertyControls.h"
 #include "WrappingToolOptions.h"
@@ -34,7 +35,7 @@ Layer* findLayer(EditorProject* project,const std::string& id) {
     return nullptr;
 }
 uint64_t retouchPixelBudget(const Document& document,const Layer& target,bool mask) {
-    uint64_t imageRemaining=100000000,maskRemaining=100000000;
+    uint64_t imageRemaining=limits::surfacePixels,maskRemaining=limits::surfacePixels;
     auto consume=[](uint64_t& remaining,int width,int height){
         if(width<=0||height<=0||width>30000||height>30000)throw std::runtime_error("Invalid existing raster extent");
         const auto pixels=uint64_t(width)*uint64_t(height);

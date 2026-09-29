@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 // Source: CloneStamp.swift, BlurTool.swift, SmudgeLiquify.swift, BrushStroke.heal.
 // Copyright (c) 2026 Wonder Assembly LLC; MIT license in LICENSE.
 #include "RetouchSession.h"
@@ -18,7 +19,7 @@ bool healing(Mode mode){return mode==Mode::HealContentAware||mode==Mode::HealCre
 bool warp(Mode mode){return mode==Mode::Smudge||mode==Mode::Liquify;}
 Pixel over(Pixel base,Pixel source,double amount){const double remain=1-source.a/255.*amount;return {byte(source.r*amount+base.r*remain),byte(source.g*amount+base.g*remain),byte(source.b*amount+base.b*remain),byte(source.a*amount+base.a*remain)};}
 Pixel lerp(Pixel base,Pixel source,double amount){return {byte(base.r+(source.r-base.r)*amount),byte(base.g+(source.g-base.g)*amount),byte(base.b+(source.b-base.b)*amount),byte(base.a+(source.a-base.a)*amount)};}
-void validSize(int w,int h){if(w<1||h<1||w>30000||h>30000||uint64_t(w)*h>100000000)throw std::invalid_argument("Retouch dimensions exceed budget");}
+void validSize(int w,int h){if(w<1||h<1||w>30000||h>30000||uint64_t(w)*h>limits::surfacePixels)throw std::invalid_argument("Retouch dimensions exceed budget");}
 void validCanvas(int w,int h){if(w<1||h<1||w>30000||h>30000)throw std::invalid_argument("Invalid retouch canvas dimensions");}
 void validRaster(const Raster& image){validSize(image.width,image.height);if(image.tiles.size()!=size_t((image.width+255)/256)*size_t((image.height+255)/256))throw std::invalid_argument("Invalid retouch tile array");for(auto&tile:image.tiles)if(!tile)throw std::invalid_argument("Missing retouch tile");}
 std::shared_ptr<const Raster> fromPixels(const std::vector<Pixel>& pixels,int w,int h){
@@ -53,7 +54,7 @@ struct SparseWorking {
     Pixel& edit(int x,int y){
         const auto id=key(x,y);auto found=tiles.find(id);
         if(found==tiles.end()){
-            if(uint64_t(tiles.size()+1)*256*256>100000000)throw std::length_error("Retouch working tiles exceed budget");
+            if(uint64_t(tiles.size()+1)*256*256>limits::surfacePixels)throw std::length_error("Retouch working tiles exceed budget");
             auto tile=std::make_shared<Raster::Tile>();const int left=x/256*256,top=y/256*256;
             for(int yy=0;yy<std::min(256,height-top);++yy)for(int xx=0;xx<std::min(256,width-left);++xx)tile->pixels[size_t(yy)*256+xx]=base(left+xx,top+yy);
             found=tiles.emplace(id,std::move(tile)).first;
@@ -141,7 +142,7 @@ struct RetouchSession::Impl {
     mutable Layer materialized;
     Impl(std::shared_ptr<const Raster> image,Transform placement,int w,int h,Settings options,Sources input,std::shared_ptr<const GrayRaster> clip,std::shared_ptr<graphics::D3D11BrushCoverage> gpu)
         :original(std::move(image)),published(original),selection(std::move(clip)),transform(placement),width(w),height(h),settings(options),sources(std::move(input)),accelerator(std::move(gpu)){
-        if(!original)throw std::invalid_argument("Missing retouch raster");validRaster(*original);validCanvas(w,h);sparseCanvas=uint64_t(w)*h>100000000;if(!placement.valid())throw std::invalid_argument("Invalid retouch transform");
+        if(!original)throw std::invalid_argument("Missing retouch raster");validRaster(*original);validCanvas(w,h);sparseCanvas=uint64_t(w)*h>limits::surfacePixels;if(!placement.valid())throw std::invalid_argument("Invalid retouch transform");
         if(int(settings.mode)<int(Mode::Clone)||int(settings.mode)>int(Mode::Liquify))throw std::invalid_argument("Invalid retouch mode");
         if(!std::isfinite(settings.radius)||settings.radius<.5||settings.radius>1000||!std::isfinite(settings.hardness)||settings.hardness<0||settings.hardness>1||!std::isfinite(settings.opacity)||settings.opacity<.01||settings.opacity>1)throw std::invalid_argument("Invalid retouch tip");
         if(selection){if(selection->width!=w||selection->height!=h||!selection->validStorage())throw std::invalid_argument("Retouch selection must use document grid");emptySelection=!selection->hasCoverage();}
@@ -194,7 +195,7 @@ struct RetouchSession::Impl {
         x=std::min(x,width-w);y=std::min(y,height-h);
         auto source=std::make_shared<graphics::SamplingSource>();source->width=w;source->height=h;source->alignmentX=-x;source->alignmentY=-y;source->identity=snapshot;
         source->rgba=[snapshot,x,y](int xx,int yy){return snapshot->pixel(xx+x,yy+y);};
-        auto result=std::make_shared<LayerRenderPreview>();result->layer=originalLayer;result->layer.raster=Raster::filled(1,1);result->layer.transform={double(x),double(y),double(w),double(h)};result->layer.shapeJson.clear();
+        auto result=std::make_shared<LayerRenderPreview>();result->layer=originalLayer;result->layer.raster=Raster::filled(1,1);result->layer.transform={double(x),double(y),double(w),double(h)};result->layer.rasterizeSource();
         if(result->layer.mask&&!result->layer.mask->placement)result->layer.mask->placement=originalLayer.transform;
         result->identity=snapshot;result->lineage=originalLayer.raster;result->imageSource=source;
         result->image=[source](Point unit,Transform::Sampling sampling){return graphics::sampleRasterPixels(source->width,source->height,source->rgba,unit,sampling);};sparsePublishedPreview=result;warpPreviewRevision=stats.warpDabs;return result;
@@ -328,7 +329,7 @@ bool RetouchSession::append(Point p){auto& s=*impl_;if(!s.started||s.finished)th
 std::shared_ptr<const graphics::GrowingBrushSnapshot> RetouchSession::previewSnapshot()const{if(!impl_->growing)throw std::logic_error("Snapshot results require a Layer-based retouch session");return impl_->growing->preview();}
 std::shared_ptr<const graphics::GrowingBrushSnapshot> RetouchSession::commitSnapshot(){auto& s=*impl_;if(!s.growing)throw std::logic_error("Snapshot results require a Layer-based retouch session");if(s.finished)return s.growing->preview();if(s.started&&s.coverageStarted){s.growing->flushCoverage();if(healing(s.settings.mode))s.finishGrowingHeal();}auto result=s.growing->commit();s.finished=true;return result;}
 std::shared_ptr<const graphics::GrowingBrushSnapshot> RetouchSession::cancelSnapshot(){auto& s=*impl_;if(!s.growing)throw std::logic_error("Snapshot results require a Layer-based retouch session");s.finished=true;s.working.clear();s.sparseWorking.reset();s.carried.clear();return s.growing->cancel();}
-std::shared_ptr<const LayerRenderPreview> RetouchSession::livePreview()const{auto& s=*impl_;if(!s.growing)throw std::logic_error("Live layer preview requires a Layer-based retouch session");if(!s.started||s.finished)return {};if(!warp(s.settings.mode))return s.growing->preview()->renderPreview();if(s.sparseWorking)return s.sparseWarpPreview();auto raster=warpDocumentPreview();auto result=std::make_shared<LayerRenderPreview>();result->layer=s.originalLayer;result->layer.raster=raster;result->layer.transform={0,0,double(s.width),double(s.height)};result->layer.shapeJson.clear();if(result->layer.mask&&!result->layer.mask->placement)result->layer.mask->placement=s.originalLayer.transform;result->identity=raster;result->lineage=s.originalLayer.raster;result->imageSource=graphics::samplingSource(raster);result->image=[raster](Point unit,Transform::Sampling sampling){return graphics::sampleRaster(*raster,unit,sampling);};return result;}
+std::shared_ptr<const LayerRenderPreview> RetouchSession::livePreview()const{auto& s=*impl_;if(!s.growing)throw std::logic_error("Live layer preview requires a Layer-based retouch session");if(!s.started||s.finished)return {};if(!warp(s.settings.mode))return s.growing->preview()->renderPreview();if(s.sparseWorking)return s.sparseWarpPreview();auto raster=warpDocumentPreview();auto result=std::make_shared<LayerRenderPreview>();result->layer=s.originalLayer;result->layer.raster=raster;result->layer.transform={0,0,double(s.width),double(s.height)};result->layer.rasterizeSource();if(result->layer.mask&&!result->layer.mask->placement)result->layer.mask->placement=s.originalLayer.transform;result->identity=raster;result->lineage=s.originalLayer.raster;result->imageSource=graphics::samplingSource(raster);result->image=[raster](Point unit,Transform::Sampling sampling){return graphics::sampleRaster(*raster,unit,sampling);};return result;}
 std::shared_ptr<const Raster> RetouchSession::preview()const{return impl_->growing?impl_->materialize().raster:impl_->published;}
 std::shared_ptr<const Raster> RetouchSession::warpDocumentPreview()const{auto& s=*impl_;if(s.sparseWorking)throw std::length_error("Materializing a full warp canvas exceeds the raster budget; use livePreview");if(!s.started||!warp(s.settings.mode)||s.working.empty())throw std::logic_error("No active warp document preview");if(s.warpPreviewRevision!=s.stats.warpDabs){s.warpPreview=fromPixels(s.working,s.width,s.height);s.warpPreviewRevision=s.stats.warpDabs;}return s.warpPreview;}
 std::shared_ptr<const Raster> RetouchSession::commit(){auto& s=*impl_;if(s.growing){commitSnapshot();return preview();}if(s.finished)return s.published;if(!s.started||!s.coverageStarted){s.finished=true;return s.published;}s.coverage->commit();if(healing(s.settings.mode))s.finishHeal();else s.compose();s.finished=true;return s.published;}

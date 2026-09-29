@@ -1,6 +1,7 @@
 // Compositing order translated from LiveMaskRenderer.swift, LayerGroups.swift,
 // FolderMaskClip and ImageExporter.swift at the pinned Compositor revision.
 // Copyright (c) 2026 Wonder Assembly LLC; MIT notice in upstream/LICENSE.
+#include "core/DocumentLimits.h"
 #include "StackRenderer.h"
 #include "RasterSampling.h"
 #include "SamplingSource.h"
@@ -60,17 +61,19 @@ class Render {
     Point position(size_t i)const{return{region.x+(double(i%size_t(region.width)+offsetX)+0.5)*region.unitsPerPixel,region.y+(double(i/size_t(region.width)+offsetY)+0.5)*region.unitsPerPixel};}
     double mask(int index,Point p,bool layerPlacement=false)const{
         const auto& info=layers[size_t(index)];const auto& l=info.layer;
+        if(l.mask&&l.mask->placement)layerPlacement=false;
         if(!l.mask||!l.mask->enabled||!l.mask->raster)return 1;
         const auto& reduced=layerPlacement?info.folderMask:info.reducedMask;
         if(reduced)return reduced->sampleGray(layerPlacement?info.imageInverse(p):info.maskInverse(p),layerPlacement?l.transform.sampling:info.maskSampling,layerPlacement?0:info.maskExterior);
         if(preview&&preview->layer.id==l.id&&preview->mask)return preview->mask(layerPlacement?info.imageInverse(p):info.maskInverse(p),layerPlacement?l.transform.sampling:info.maskSampling,layerPlacement?0:info.maskExterior);
         return sampleMask(*l.mask->raster,layerPlacement?info.imageInverse(p):info.maskInverse(p),layerPlacement?l.transform.sampling:info.maskSampling,layerPlacement?0:info.maskExterior);
     }
+    double opacity(int index)const{double result=layers[size_t(index)].layer.opacity;for(int a:layers[size_t(index)].ancestors)result*=layers[size_t(a)].layer.opacity;return result;}
     double folders(int index,Point p)const{double result=1;for(int a:layers[size_t(index)].ancestors)result*=mask(a,p,true);return result;}
     Pixel own(int index,Point p,double factor=1)const{
         const auto& info=layers[size_t(index)];const auto& l=info.layer;if(!l.raster)return{};
         const auto value=info.reducedImage?info.reducedImage->sample(info.imageInverse(p),l.transform.sampling):preview&&preview->layer.id==l.id&&preview->image?preview->image(info.imageInverse(p),l.transform.sampling):sampleRaster(*l.raster,info.imageInverse(p),l.transform.sampling);
-        return scale(value,l.opacity*mask(index,p)*factor);
+        return scale(value,opacity(index)*mask(index,p)*factor);
     }
     double dependency(int source,Point p)const{
         // Source visibility and containing-folder masks are intentionally absent:
@@ -94,7 +97,7 @@ class Render {
         for(size_t i=0;i<pixelCount;++i){auto original=pixels[i];auto value=adjusted->pixel(int(i%size_t(region.width)),int(i/size_t(region.width)));
             if(value.r>value.a||value.g>value.a||value.b>value.a)throw std::runtime_error("Adjustment callback returned invalid premultiplication");
             if(l.blend!=Blend::Normal)value=restore(blendPixel(opaque(original),opaque(value),l.blend),original.a);
-            value=interpolate(original,value,l.opacity);
+            value=interpolate(original,value,opacity(index));
             auto p=position(i);pixels[i]=interpolate(original,value,mask(index,p,true)*(folderClip?folders(index,p):1));}
     }
 public:
@@ -136,12 +139,12 @@ public:
 };
 }
 std::shared_ptr<const Raster> StackRenderer::render(const Document& d,int x,int y,int width,int height)const{
-    if(width<1||height<1||width>30000||height>30000||uint64_t(width)*height>100000000 ||
+    if(width<1||height<1||width>30000||height>30000||uint64_t(width)*height>limits::surfacePixels ||
        std::abs(int64_t(x))>10000000||std::abs(int64_t(y))>10000000)throw std::invalid_argument("Invalid render region");
     return Render(d,{double(x),double(y),width,height,1},adjustment_,preview_).run();
 }
 std::shared_ptr<const Raster> StackRenderer::renderScaled(const Document& d,double x,double y,int width,int height,double unitsPerPixel)const{
-    if(width<1||height<1||width>30000||height>30000||uint64_t(width)*height>100000000||
+    if(width<1||height<1||width>30000||height>30000||uint64_t(width)*height>limits::surfacePixels||
        !std::isfinite(x)||!std::isfinite(y)||std::abs(x)>10000000||std::abs(y)>10000000||
        !std::isfinite(unitsPerPixel)||unitsPerPixel<1./32||unitsPerPixel>32768)
         throw std::invalid_argument("Invalid scaled render region");

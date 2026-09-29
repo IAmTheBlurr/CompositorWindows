@@ -6,7 +6,7 @@ enum class EditorIcon {
     Move, Marquee, EllipseMarquee, Lasso, Polygon, Wand, Crop, Brush, Eraser,
     Heal, Clone, Retouch, Gradient, Shape, Eyedropper, Hand, Zoom, Group, Mask, Delete,
     Close, Minus, Maximize, Plus, Folder, File, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Link,
-    Home, Computer, Drive, ListView, DetailView, GridView, Info
+    Home, Computer, Drive, ListView, DetailView, GridView, Info, Type
 };
 QIcon editorIcon(EditorIcon icon);
 }

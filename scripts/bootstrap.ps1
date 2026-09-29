@@ -23,6 +23,7 @@ if (-not (Test-Path (Join-Path $taskQt 'lib\cmake\Qt6\Qt6Config.cmake'))) {
 $env:PATH = "$taskQt\bin;$env:PATH"
 $env:PATH = "$taskRoot\dependencies\imaging\install\bin;$taskRoot\dependencies\imaging\onnxruntime-win-x64-1.30.0\lib;$env:PATH"
 $env:QT_PLUGIN_PATH = Join-Path $taskQt 'plugins'
+& (Join-Path $PSScriptRoot 'bootstrap-imports.ps1') -Offline:$Offline
 $taskImaging = Join-Path $taskRoot 'dependencies\imaging'
 $taskRequired = @('install\bin\heif.dll','install\bin\libde265.dll','install\lib\heif.lib','install\lib\de265.lib','install\include\libheif\heif.h','onnxruntime-win-x64-1.30.0\lib\onnxruntime.dll','onnxruntime-win-x64-1.30.0\lib\onnxruntime_providers_shared.dll','onnxruntime-win-x64-1.30.0\lib\onnxruntime.lib','onnxruntime-win-x64-1.30.0\include\onnxruntime_cxx_api.h','model\birefnet-lite.onnx')
 $taskMissing = @($taskRequired | Where-Object { -not (Test-Path -LiteralPath (Join-Path $taskImaging $_)) })
@@ -41,3 +42,5 @@ if ($RuntimeDirectory) {
 if ((Get-FileHash -LiteralPath (Join-Path $taskImaging 'model\birefnet-lite.onnx') -Algorithm SHA256).Hash -ine 'c0faf38f5504f2239f1e6481ce4ac166b17435b38ea35e480d811a47bc1aba80') { throw 'Foreground model SHA256 mismatch.' }
 & cmake --version
 Write-Host "Ready: Qt $($taskLock.qt.version), MSVC $env:VCToolsVersion, SDK $env:WindowsSDKVersion. Run cmake --preset windows-x64-debug from $taskRoot."
+
+& (Join-Path $PSScriptRoot "bootstrap-object-selection.ps1") -Offline:$Offline

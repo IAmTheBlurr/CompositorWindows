@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 // Selection.swift and MagicWand.swift at a19db9011282399785dc18efcfded904627bdcc2.
 // Copyright (c) 2026 Wonder Assembly LLC; MIT notice in graphics/upstream/LICENSE.
 #include "Selection.h"
@@ -20,7 +21,7 @@ namespace compositor::editing {
 using Microsoft::WRL::ComPtr;
 namespace {
 void check(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("Direct2D selection operation failed: " + std::to_string(uint32_t(hr))); }
-void sizeCheck(int w,int h) { if(w<1||h<1||w>30000||h>30000||uint64_t(w)*h>100000000) throw std::runtime_error("Selection raster exceeds pixel budget"); }
+void sizeCheck(int w,int h) { if(w<1||h<1||w>30000||h>30000||uint64_t(w)*h>limits::surfacePixels) throw std::runtime_error("Selection raster exceeds pixel budget"); }
 void grayCheck(const GrayRaster& g) { if(!g.validStorage()) throw std::runtime_error("Invalid selection coverage"); }
 void pointCheck(Point p) { if(!std::isfinite(p.x)||!std::isfinite(p.y)||std::abs(p.x)>10000000||std::abs(p.y)>10000000) throw std::runtime_error("Invalid selection coordinate"); }
 void rectCheck(Rect r) { pointCheck({r.x,r.y}); pointCheck({r.x+r.width,r.y+r.height}); if(r.width<0||r.height<0)throw std::runtime_error("Invalid selection rectangle"); }
@@ -242,12 +243,12 @@ std::optional<SelectionOutline> applySelection(const std::optional<SelectionOutl
 }
 std::optional<SelectionOutline> finishSelection(const std::optional<SelectionOutline>& current,const SelectionOutline& draft,SelectionMode mode,int w,int h,bool aa){if(draft.empty())return mode==SelectionMode::Replace?std::nullopt:current;return applySelection(current,draft,mode,w,h,aa);}
 std::optional<SelectionOutline> inverseSelection(const std::optional<SelectionOutline>& current,int w,int h){if(!current)return {};return SelectionOutline::rectangle({0,0,double(w),double(h)}).combined(*current,SelectionMode::Subtract,current->antialiased());}
-std::optional<Selection> rasterSelection(const std::optional<SelectionOutline>& outline,int w,int h){if(!outline)return {};return Selection{outline->rasterize(w,h),std::make_shared<SelectionOutline>(*outline)};}
+std::optional<Selection> rasterSelection(const std::optional<SelectionOutline>& outline,int w,int h,double feather){if(!outline)return {};auto path=std::make_shared<SelectionOutline>(*outline);return Selection{featherCoverage(outline->rasterize(w,h),feather,path),path,feather};}
 bool appendLassoPoint(std::vector<Point>& points,Point p){if(!std::isfinite(p.x)||!std::isfinite(p.y))return false;pointCheck(p);if(!points.empty()&&std::hypot(p.x-points.back().x,p.y-points.back().y)<.25)return false;if(points.size()>=1000000)throw std::runtime_error("Selection path exceeds point budget");points.push_back(p);return true;}
 Rect coverageBounds(const GrayRaster& g){const auto b=g.nonzeroBounds();return {double(b.x),double(b.y),double(b.width),double(b.height)};}
 std::optional<Selection> moveSelectionCoverage(const std::optional<Selection>& original,Point offset){
     if(!original)return {};if(!original->coverage)throw std::runtime_error("Present selection has no coverage");grayCheck(*original->coverage);pointCheck(offset);int dx=int(std::round(offset.x)),dy=int(std::round(offset.y));if(dx==0&&dy==0)return original;
-    const auto& g=*original->coverage;if(original->outline)return rasterSelection(original->outline->moved(offset),g.width,g.height);
+    const auto& g=*original->coverage;if(original->outline)return rasterSelection(original->outline->moved(offset),g.width,g.height,original->feather);
     if(g.source){
         if(auto outline=g.source->vectorOutline())return rasterSelection(outline->moved(offset),g.width,g.height);
         auto b=g.nonzeroBounds();int l=std::clamp(b.x+dx,0,g.width),t=std::clamp(b.y+dy,0,g.height),r=std::clamp(b.x+b.width+dx,0,g.width),bottom=std::clamp(b.y+b.height+dy,0,g.height);

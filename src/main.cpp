@@ -13,7 +13,7 @@
 #include <QTextStream>
 
 int main(int argc,char**argv){
-    QApplication app(argc,argv);app.setApplicationName("Compositor");app.setOrganizationName("Compositor Windows");app.setApplicationVersion("0.1.5");
+    QApplication app(argc,argv);app.setApplicationName("Compositor");app.setOrganizationName("Compositor Windows");app.setApplicationVersion("1.2.11");
     app.setProperty("manualUpdatesOnly", true);
     const auto args=app.arguments();
     if(args.contains("--update-health-check")){
@@ -23,6 +23,8 @@ int main(int argc,char**argv){
             compositor::imaging::OnnxSubjectProvider provider(std::filesystem::path(model.toStdWString()));
             compositor::imaging::RgbaImage image{2,2,8,std::vector<uint8_t>(16,255)};
             provider.healthCheck();
+            compositor::imaging::OnnxObjectProvider objects(std::filesystem::path(QApplication::applicationDirPath().toStdWString())/L"models");
+            auto objectMask=objects.infer(image,1,1);compositor::imaging::validate(objectMask);
             QTemporaryDir directory;if(!directory.isValid())throw std::runtime_error("No writable temporary directory");
             auto path=std::filesystem::path((directory.path()+"/check.png").toStdWString());compositor::imaging::WicCodec::encode(path,image,{});auto decoded=compositor::imaging::WicCodec::decode(path);if(decoded.image.pixels!=image.pixels)throw std::runtime_error("Image codec health check failed");
             return 0;

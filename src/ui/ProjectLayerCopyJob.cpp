@@ -34,8 +34,8 @@ void ProjectLayerCopyJob::advance(){
     while(state.next<state.ids.size()){
         try{
             state.work=state.host.prepare(state.ids[state.next++]);if(!state.work)continue;
-            auto source=state.work->source,destination=state.work->destination;auto root=state.work->root;const auto point=state.work->point;auto cancelled=state.cancelled;
-            state.watcher.setFuture(QtConcurrent::run([source=std::move(source),destination=std::move(destination),root=std::move(root),point,cancelled]{Impl::Result result;try{layers::Limits limits;limits.cancelled=[cancelled]{return cancelled->load();};result.value=std::make_shared<layers::CopyResult>(layers::copySubtree(source,root,destination,point,limits));}catch(const std::exception& error){result.error=QString::fromUtf8(error.what());}return result;}));
+            auto source=state.work->source,destination=state.work->destination;auto roots=state.work->roots.empty()?std::vector<std::string>{state.work->root}:state.work->roots;const auto point=state.work->point;auto cancelled=state.cancelled;
+            state.watcher.setFuture(QtConcurrent::run([source=std::move(source),destination=std::move(destination),roots=std::move(roots),point,cancelled]{Impl::Result result;try{layers::Limits limits;limits.cancelled=[cancelled]{return cancelled->load();};result.value=std::make_shared<layers::CopyResult>(layers::copyLayers(source,roots,destination,point,limits));}catch(const std::exception& error){result.error=QString::fromUtf8(error.what());}return result;}));
             return;
         }catch(const std::exception& error){if(state.work){state.host.settled(*state.work);state.work.reset();}QPointer<ProjectLayerCopyJob> alive=this;state.host.error(QString::fromUtf8(error.what()));if(!alive)return;}
     }

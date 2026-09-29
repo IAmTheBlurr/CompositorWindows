@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 // Levels.swift, LevelsAutomatic.swift and LevelsSheet.swift at the pinned source.
 // Copyright (c) 2026 Wonder Assembly LLC; MIT notice in graphics/upstream/LICENSE.
 #include "Levels.h"
@@ -17,7 +18,7 @@ constexpr const char* channelNames[]{"RGB","Red","Green","Blue"};
 int channelIndex(LevelsChannel channel){int index=int(channel);if(index<0||index>3)throw std::runtime_error("Invalid Levels channel");return index;}
 double clamp(double value,double lo,double hi,double fallback){return std::isfinite(value)?std::clamp(value,lo,hi):fallback;}
 QJsonObject parse(std::string_view text){if(text.size()>4*1024*1024)throw std::runtime_error("Adjustment JSON exceeds budget");QJsonParseError error;auto doc=QJsonDocument::fromJson(QByteArray(text.data(),qsizetype(text.size())),&error);if(error.error!=QJsonParseError::NoError||!doc.isObject())throw std::runtime_error("Invalid adjustment JSON");return doc.object();}
-void rasterCheck(const Raster& raster){if(raster.width<1||raster.height<1||raster.width>30000||raster.height>30000||uint64_t(raster.width)*raster.height>100000000||raster.tiles.size()!=size_t((raster.width+255)/256)*size_t((raster.height+255)/256)||std::any_of(raster.tiles.begin(),raster.tiles.end(),[](const auto& tile){return !tile;}))throw std::runtime_error("Invalid Levels source raster");}
+void rasterCheck(const Raster& raster){if(raster.width<1||raster.height<1||raster.width>30000||raster.height>30000||uint64_t(raster.width)*raster.height>limits::surfacePixels||raster.tiles.size()!=size_t((raster.width+255)/256)*size_t((raster.height+255)/256)||std::any_of(raster.tiles.begin(),raster.tiles.end(),[](const auto& tile){return !tile;}))throw std::runtime_error("Invalid Levels source raster");}
 }
 LevelRange LevelRange::normalized()const{auto result=*this;result.black=clamp(black,0,254,0);result.white=clamp(white,result.black+1,255,255);result.gamma=clamp(gamma,.1,9.99,1);result.outputBlack=clamp(outputBlack,0,255,0);result.outputWhite=clamp(outputWhite,0,255,255);return result;}
 double LevelRange::apply(double value)const{auto s=normalized();double input=std::clamp((value*255-s.black)/(s.white-s.black),0.,1.);return (s.outputBlack+std::pow(input,1/s.gamma)*(s.outputWhite-s.outputBlack))/255;}

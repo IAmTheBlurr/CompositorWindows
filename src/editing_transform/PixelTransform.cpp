@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 // Source: BrushStroke.liftSelection/moveLifted, FloatingSelection/FloatingMerge,
 // SelectionClipboard.renderSelectedPixels, SelectionEdits. MIT: LICENSE.
 #include "PixelTransform.h"
@@ -17,7 +18,7 @@ Rect integral(Rect r){double x=std::floor(r.x),y=std::floor(r.y);return {x,y,std
 Rect united(Rect a,Rect b){if(a.width<=0||a.height<=0)return b;if(b.width<=0||b.height<=0)return a;const double x=std::min(a.x,b.x),y=std::min(a.y,b.y);return {x,y,std::max(a.x+a.width,b.x+b.width)-x,std::max(a.y+a.height,b.y+b.height)-y};}
 Rect intersected(Rect a,Rect b){const double x=std::max(a.x,b.x),y=std::max(a.y,b.y);return {x,y,std::max(0.,std::min(a.x+a.width,b.x+b.width)-x),std::max(0.,std::min(a.y+a.height,b.y+b.height)-y)};}
 template<class Map>Rect mapped(Rect r,Map map){const std::array<Point,4> points{{map({r.x,r.y}),map({r.x+r.width,r.y}),map({r.x+r.width,r.y+r.height}),map({r.x,r.y+r.height})}};double x0=points[0].x,x1=x0,y0=points[0].y,y1=y0;for(auto p:points){x0=std::min(x0,p.x);x1=std::max(x1,p.x);y0=std::min(y0,p.y);y1=std::max(y1,p.y);}return {x0,y0,x1-x0,y1-y0};}
-void budget(Rect r){if(!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<1||r.height<1||r.width>30000||r.height>30000||r.width*r.height>100000000)throw std::invalid_argument("Selected pixel extent exceeds budget");}
+void budget(Rect r){if(!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<1||r.height<1||r.width>30000||r.height>30000||r.width*r.height>limits::surfacePixels)throw std::invalid_argument("Selected pixel extent exceeds budget");}
 std::shared_ptr<const Raster> makeRaster(int width,int height,const std::function<Pixel(int,int)>& pixel,CancelCheck check={}){
     auto out=std::make_shared<Raster>();out->width=width;out->height=height;
     for(int ty=0;ty<(height+255)/256;++ty)for(int tx=0;tx<(width+255)/256;++tx){auto tile=std::make_shared<Raster::Tile>();for(int y=0;y<std::min(256,height-ty*256);++y){cancelled(check);for(int x=0;x<std::min(256,width-tx*256);++x)tile->pixels[size_t(y)*256+x]=pixel(tx*256+x,ty*256+y);}out->tiles.push_back(std::move(tile));}return out;
@@ -55,10 +56,14 @@ struct PixelTransformSession::Impl {
     Point mapSelection(Point p)const{
         if(kind==PixelTransformKind::Move)return {p.x+offset.x,p.y+offset.y};
         auto unit=floatingOriginal.toUnit(p);
-        if(distortion){if(floatingDraft.flipX)unit.x=1-unit.x;if(floatingDraft.flipY)unit.y=1-unit.y;return Homography::fromCorners(*distortion).map(unit);}
+        if(distortion){if(floatingDraft.flipX)unit.x=1-unit.x;if(floatingDraft.flipY)unit.y=1-unit.y;return distortedUnitPoint(*distortion,unit);}
         return floatingDraft.fromUnit(unit);
     }
     std::shared_ptr<const GrayRaster> movedSelection(CancelCheck check,bool affineOnly=false)const{
+        if(distortion&&!affineOnly&&!convexCorners(*distortion)){
+            cancelled(check);const auto shape=*distortion;double left=shape[0].x,right=left,top=shape[0].y,bottom=top;for(auto p:shape){left=std::min(left,p.x);right=std::max(right,p.x);top=std::min(top,p.y);bottom=std::max(bottom,p.y);}const int x=std::clamp(int(std::floor(left)),0,selection->width),y=std::clamp(int(std::floor(top)),0,selection->height),r=std::clamp(int(std::ceil(right)),0,selection->width),b=std::clamp(int(std::ceil(bottom)),0,selection->height);
+            auto clip=selection;const auto initial=floatingOriginal,draft=floatingDraft;auto sample=[clip,shape,initial,draft](int px,int py){double coverage=0;for(auto unit:foldedUnitSamples(shape,{px+.5,py+.5}))if(unit){if(draft.flipX)unit->x=1-unit->x;if(draft.flipY)unit->y=1-unit->y;const auto source=initial.fromUnit(*unit);const double value=graphics::sampleGray(*clip,{source.x/clip->width,source.y/clip->height},Transform::Sampling::Smooth);coverage=value+coverage*(1-value);}return byte(coverage*255);};return GrayRaster::sampled(clip->width,clip->height,{x,y,std::max(0,r-x),std::max(0,b-y)},std::move(sample),clip->retainedBytes());
+        }
         if(selection->source){
             cancelled(check);std::optional<Homography> inverse;if(distortion&&!affineOnly)inverse=Homography::fromCorners(*distortion).inverse();
             auto clip=selection;auto mode=kind;auto shift=offset;auto draft=floatingDraft;auto initial=floatingOriginal;
@@ -108,7 +113,7 @@ struct PixelTransformSession::Impl {
                 const auto value=over(under,copied);tile->pixels[size_t(y)*256+x]=value;if(value!=base)tileUnchanged=false;}}
             image->tiles.push_back(tileUnchanged?source.tiles[key]:std::move(tile));
         }
-        auto layer=original;layer.raster=image;layer.transform=sourceExtentTransform(extent);
+        auto layer=original;layer.raster=image;layer.transform=sourceExtentTransform(extent);if(image!=original.raster)layer.rasterizeSource();
         if(layer.mask&&!layer.mask->placement&&!sameGrid){const auto& current=*layer.mask->raster;auto grown=std::make_shared<GrayRaster>();grown->width=w;grown->height=h;grown->pixels.resize(size_t(w)*h,255);
             for(int y=0;y<h;++y){cancelled(check);for(int x=0;x<w;++x){const double px=extent.x+x+.5,py=extent.y+y+.5;if(px>=0&&py>=0&&px<source.width&&py<source.height)grown->pixels[size_t(y)*w+x]=byte(graphics::sampleGray(current,{px/source.width,py/source.height},Transform::Sampling::Nearest)*255);}}
             layer.mask->raster=std::move(grown);

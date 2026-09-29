@@ -1,3 +1,4 @@
+#include "core/DocumentLimits.h"
 #include "Downsample.h"
 #include "MaskSampling.h"
 #include "DownsampleKernel.h"
@@ -8,7 +9,7 @@
 #include <stdexcept>
 namespace compositor::graphics {
 namespace {
-void dimensions(int width,int height){if(width<1||height<1||width>30000||height>30000||uint64_t(width)*height>100000000)throw std::invalid_argument("Invalid downsample source extent");}
+void dimensions(int width,int height){if(width<1||height<1||width>30000||height>30000||uint64_t(width)*height>limits::surfacePixels)throw std::invalid_argument("Invalid downsample source extent");}
 uint8_t byte(double value){return uint8_t(std::clamp(std::lround(value),0L,255L));}
 // Keep only the twenty horizontally filtered rows needed by one destination row.
 // This avoids a source-sized intermediate floating-point raster.

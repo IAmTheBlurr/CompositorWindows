@@ -3,6 +3,7 @@
 #include "retouch/RetouchSession.h"
 #include "editing/PixelEdits.h"
 #include "editing/Shapes.h"
+#include "editing/Text.h"
 #include "editing/SelectionGesture.h"
 #include "filters/PixelFilters.h"
 #include "imaging/subject_matte.h"
@@ -11,7 +12,7 @@
 
 namespace compositor {
 // Values preserve the existing tool action/property order.
-enum class ProjectTool { Move,Hand,Brush,Eraser,Marquee,Lasso,Polygon,Wand,Gradient,Shape,Crop,CloneStamp,SpotHealing,Blur,Eyedropper,Zoom };
+enum class ProjectTool { Move,Hand,Brush,Eraser,Marquee,Lasso,Polygon,Wand,Gradient,Shape,Crop,CloneStamp,SpotHealing,Blur,Eyedropper,Zoom,Type };
 enum class ProjectBrushMode { Paint,Erase };
 
 // Filters.swift33-83: one remembered bundle per EditorSession. Adjustment JSON
@@ -20,7 +21,7 @@ enum class ProjectBrushMode { Paint,Erase };
 struct ProjectFilterSettings {
     filters::Settings pixels;
     imaging::MatteSettings background;
-    QJsonObject curves,exposure,gradientMap,grain;
+    QJsonObject curves,exposure,gradientMap,grain,extraAdjustments;
     ProjectFilterSettings();
     std::string beginAdjustment(const QString& kind,QColor foreground,QColor backgroundColor) const;
     void rememberAdjustment(const std::string& json);
@@ -37,6 +38,7 @@ struct ProjectToolState {
     retouch::Mode healingMode{retouch::Mode::HealContentAware};
     editing::GradientSettings gradientSettings;
     editing::ShapeStyle shapeStyle;
+    editing::TextStyle textStyle;
     editing::SelectionMode selectionMode{editing::SelectionMode::Replace};
     QString cropRatioChoice{"Free"};
     editing::LassoKind lassoKind{editing::LassoKind::Freehand};
@@ -44,7 +46,8 @@ struct ProjectToolState {
     ProjectFilterSettings filterSettings;
     bool ellipse{},selectionAntialias{true};
     int wandTolerance{32},wandSampleRadius{};
-    bool wandContiguous{true},wandAllLayers{};
+    bool wandContiguous{true},wandAllLayers{},objectSelection{};
+    int objectEdgeOffset{};
     bool maskPaintWhite{},showSampleRing{true},showPixelGrid{true};
     bool lockRatio{true},autoSelectLayers{},transformControls{true},snapping{true};
     // Continuity for a future Shift-click, not an in-flight pointer gesture.

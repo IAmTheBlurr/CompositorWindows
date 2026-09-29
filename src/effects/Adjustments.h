@@ -11,6 +11,7 @@ struct AdjustmentRegion { double originX{},originY{},unitsPerPixel{1}; };
 // Exposure, Gradient Map, Grain. Unknown kinds throw; no silent passthrough.
 std::string defaultAdjustmentJson(std::string_view kind);
 void validateAdjustmentJson(std::string_view json);
+double adjustmentSamplingMargin(std::string_view json);
 // Selection is optional grayscale coverage already mapped to the source pixel grid.
 // All-zero coverage edits nothing. Each immutable tile is copied only if its pixels change.
 // Levels intentionally retains the pinned Swift wrapper's documented double-alpha conflict.

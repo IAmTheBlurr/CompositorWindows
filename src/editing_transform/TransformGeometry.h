@@ -57,6 +57,7 @@ struct Drag {
     std::optional<Corners> movedCorners(Point,bool shift=false) const;
 };
 bool usableCorners(const Corners&);
+bool convexCorners(const Corners&);
 struct SnapTargets { std::vector<double> xs,ys; };
 struct SnapResult { Point offset; std::optional<double> x,y; };
 SnapResult snapOffset(Rect,const SnapTargets&,double documentTolerance);

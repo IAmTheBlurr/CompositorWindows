@@ -27,6 +27,7 @@ void detach(NativeCanvas*canvas){
 }
 }
 MainWindow::~MainWindow(){
+    cancelText();
     detachOpacityPercent();
     qApp->removeEventFilter(this);stopSelectionAutoscroll();
     cancelEditPanel();

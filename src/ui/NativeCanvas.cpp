@@ -90,7 +90,8 @@ if(shapeDraft_&&documentWidth_>0&&documentHeight_>0){
     check(context_->CreateSolidColorBrush(D2D1::ColorF(draft.fill.r/255.f,draft.fill.g/255.f,draft.fill.b/255.f,draft.fill.a/255.f),&fill),"Shape draft fill");
     check(context_->CreateSolidColorBrush(D2D1::ColorF(0,0,0,.6f),&outline),"Shape draft outline");
     context_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if(draft.kind==editing::ShapeKind::Ellipse){const auto ellipse=D2D1::Ellipse(D2D1::Point2F((bounds.left+bounds.right)/2,(bounds.top+bounds.bottom)/2),(bounds.right-bounds.left)/2,(bounds.bottom-bounds.top)/2);context_->FillEllipse(ellipse,fill.Get());context_->DrawEllipse(ellipse,outline.Get(),1);}
+    if(draft.kind==editing::ShapeKind::Line&&draft.start&&draft.end){const auto from=mapping.toView(*draft.start),to=mapping.toView(*draft.end);ComPtr<ID2D1StrokeStyle> stroke;auto properties=D2D1::StrokeStyleProperties();properties.startCap=properties.endCap=D2D1_CAP_STYLE_ROUND;check(factory_->CreateStrokeStyle(properties,nullptr,0,&stroke),"Line draft stroke");context_->DrawLine(D2D1::Point2F(float(from.x),float(from.y)),D2D1::Point2F(float(to.x),float(to.y)),fill.Get(),float(draft.lineWidth*pointsPerPixel()),stroke.Get());}
+    else if(draft.kind==editing::ShapeKind::Ellipse){const auto ellipse=D2D1::Ellipse(D2D1::Point2F((bounds.left+bounds.right)/2,(bounds.top+bounds.bottom)/2),(bounds.right-bounds.left)/2,(bounds.bottom-bounds.top)/2);context_->FillEllipse(ellipse,fill.Get());context_->DrawEllipse(ellipse,outline.Get(),1);}
     else{const float radius=float(std::clamp(draft.cornerRadius,0.,std::min(draft.rect.width,draft.rect.height)/2)*pointsPerPixel());const auto rounded=D2D1::RoundedRect(bounds,radius,radius);context_->FillRoundedRectangle(rounded,fill.Get());context_->DrawRoundedRectangle(rounded,outline.Get(),1);}
     context_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
 }
@@ -167,7 +168,7 @@ if((snapGuideX_||snapGuideY_)&&documentWidth_>0&&documentHeight_>0){
     if(snapGuideX_)context_->DrawLine(point({*snapGuideX_,0}),point({*snapGuideX_,double(documentHeight_)}),accent.Get(),1);
     if(snapGuideY_)context_->DrawLine(point({0,*snapGuideY_}),point({double(documentWidth_),*snapGuideY_}),accent.Get(),1);
 }
-auto hr=context_->EndDraw();if(hr==D2DERR_RECREATE_TARGET){releaseDevice();update();return;}check(hr,"Canvas draw");hr=finishPresentation();if(hr==D2DERR_RECREATE_TARGET){releaseDevice();update();return;}check(hr,"Canvas presentation");if(!present)return;hr=swap_->Present(1,0);if(hr==DXGI_ERROR_DEVICE_REMOVED||hr==DXGI_ERROR_DEVICE_RESET){releaseDevice();update();return;}check(hr,"Canvas present");}
+drawLayout();auto hr=context_->EndDraw();if(hr==D2DERR_RECREATE_TARGET){releaseDevice();update();return;}check(hr,"Canvas draw");hr=finishPresentation();if(hr==D2DERR_RECREATE_TARGET){releaseDevice();update();return;}check(hr,"Canvas presentation");if(!present)return;hr=swap_->Present(1,0);if(hr==DXGI_ERROR_DEVICE_REMOVED||hr==DXGI_ERROR_DEVICE_RESET){releaseDevice();update();return;}check(hr,"Canvas present");}
 std::optional<int> NativeCanvas::cropResizeHandle(editing::Rect crop,Point point,const editing_transform::ViewMapping& mapping){
     const auto geometry=editing_transform::OverlayGeometry::fromTransform({crop.x,crop.y,crop.width,crop.height},mapping);
     const auto contains=[&](double x,double y,double w,double h){return point.x>=x&&point.y>=y&&point.x<x+w&&point.y<y+h;};
@@ -242,12 +243,16 @@ QImage NativeCanvas::captureRendered(){
 void NativeCanvas::paintEvent(QPaintEvent*){try{draw();error_.clear();}catch(const std::exception&e){error_=e.what();releaseDevice();}}
 void NativeCanvas::resizeEvent(QResizeEvent*){synchronizeViewport();if(swap_){context_->SetTarget(nullptr);target_.Reset();auto hr=swap_->ResizeBuffers(0,std::max(1,int(width()*devicePixelRatioF())),std::max(1,int(height()*devicePixelRatioF())),DXGI_FORMAT_UNKNOWN,0);try{check(hr,"Canvas resize");createTarget();}catch(const std::exception&e){error_=e.what();releaseDevice();}}update();}
 void NativeCanvas::mousePressEvent(QMouseEvent*e){
+    if(e->button()==Qt::MiddleButton&&!dragging_&&!rightDragging_&&documentWidth_>0&&(!navigationAllowed||navigationAllowed())){middlePanning_=true;middleLast_=e->position();grabMouse();setCursor(Qt::ClosedHandCursor);e->accept();return;}
     if(tabletActive_){e->accept();return;}
+    if(e->button()==Qt::LeftButton&&beginGuide(e->position())){setFocus();dragging_=true;grabMouse();update();e->accept();return;}
     setFocus();last_=e->position();if(pointerHover)pointerHover(e->position(),e->modifiers());
     if(e->button()==Qt::RightButton&&rightPointerDown&&rightPointerDown(e->position(),e->modifiers())){rightDragging_=true;grabMouse();e->accept();return;}
     if(e->button()==Qt::LeftButton&&!rightDragging_){dragging_=true;grabMouse();if(pointerDown)pointerDown(documentPoint(e->position()),e->modifiers());}
 }
 void NativeCanvas::mouseMoveEvent(QMouseEvent*e){
+    if(middlePanning_){panBy(e->position()-middleLast_);middleLast_=e->position();return;}
+    if(draggedGuide_){updateGuide(e->position(),false);return;}
     if(tabletActive_){e->accept();return;}
     if(pointerHover)pointerHover(e->position(),e->modifiers());
     if(rightDragging_){if(rightPointerMove)rightPointerMove(e->position(),e->modifiers(),false);last_=e->position();return;}
@@ -265,6 +270,8 @@ void NativeCanvas::mouseDoubleClickEvent(QMouseEvent* e){
     dragging_=true;grabMouse();if(pointerDoubleClick)pointerDoubleClick(documentPoint(e->position()),e->modifiers());else if(pointerDown)pointerDown(documentPoint(e->position()),e->modifiers());
 }
 void NativeCanvas::mouseReleaseEvent(QMouseEvent*e){
+    if(middlePanning_&&e->button()==Qt::MiddleButton){middlePanning_=false;releaseMouse();unsetCursor();return;}
+    if(draggedGuide_&&e->button()==Qt::LeftButton){dragging_=false;updateGuide(e->position(),true);releaseMouse();return;}
     if(tabletActive_){e->accept();return;}
     if(rightDragging_&&e->button()==Qt::RightButton){rightDragging_=false;releaseMouse();if(rightPointerMove)rightPointerMove(e->position(),e->modifiers(),true);return;}
     if(dragging_&&e->button()==Qt::LeftButton){dragging_=false;releaseMouse();if(pointerUp)pointerUp(documentPoint(e->position()),e->modifiers());}
@@ -277,7 +284,7 @@ void NativeCanvas::wheelEvent(QWheelEvent*e){
     if(e->modifiers()&(Qt::ControlModifier|Qt::AltModifier))zoomAt(zoom*std::exp(-delta.y()*.015),e->position());else panBy(delta*(precise?1:12));
     if(pointerHover)pointerHover(e->position(),e->modifiers());
 }
-void NativeCanvas::keyPressEvent(QKeyEvent*e){if(e->key()==Qt::Key_Escape&&(dragging_||rightDragging_)){dragging_=rightDragging_=tabletActive_=false;releaseMouse();if(pointerCancel)pointerCancel();e->accept();}else QWidget::keyPressEvent(e);}
+void NativeCanvas::keyPressEvent(QKeyEvent*e){if(e->key()==Qt::Key_Escape&&(dragging_||rightDragging_)){draggedGuide_.reset();update();dragging_=rightDragging_=tabletActive_=false;releaseMouse();if(pointerCancel)pointerCancel();e->accept();}else QWidget::keyPressEvent(e);}
 void NativeCanvas::tabletEvent(QTabletEvent*e){
     e->accept();if(pointerHover)pointerHover(e->position(),e->modifiers());
     if(e->type()==QEvent::TabletPress){setFocus();if(dragging_||rightDragging_)return;tabletActive_=dragging_=true;grabMouse();if(pointerDown)pointerDown(documentPoint(e->position()),e->modifiers());}
@@ -289,7 +296,7 @@ void NativeCanvas::leaveEvent(QEvent*e){if(pointerLeave)pointerLeave();if(!dragg
 bool NativeCanvas::event(QEvent*e){if(e->type()==QEvent::Show){watchPresentationWindow();refreshDisplayProfile();updateSelectionAnimation();}
     if(e->type()==QEvent::Hide&&selectionTimer_)selectionTimer_->stop();
     const bool focusLost=e->type()==QEvent::WindowDeactivate||e->type()==QEvent::FocusOut;
-    if(focusLost||(e->type()==QEvent::UngrabMouse&&(dragging_||rightDragging_))){setSnapGuides();dragging_=rightDragging_=tabletActive_=false;if(QWidget::mouseGrabber()==this)releaseMouse();if(pointerInterrupted)pointerInterrupted();else if(pointerCancel)pointerCancel();}
+    if(focusLost||(e->type()==QEvent::UngrabMouse&&(dragging_||rightDragging_||middlePanning_))){middlePanning_=false;draggedGuide_.reset();setSnapGuides();dragging_=rightDragging_=tabletActive_=false;if(QWidget::mouseGrabber()==this)releaseMouse();if(pointerInterrupted)pointerInterrupted();else if(pointerCancel)pointerCancel();}
     if(e->type()==QEvent::DevicePixelRatioChange){releaseDevice();synchronizeViewport();}
     if(e->type()==QEvent::NativeGesture){auto*gesture=static_cast<QNativeGestureEvent*>(e);if(gesture->gestureType()==Qt::ZoomNativeGesture){if(documentWidth_>0&&(!navigationAllowed||navigationAllowed()))zoomAt(zoom*(1+gesture->value()),gesture->position());gesture->accept();return true;}}
     return QWidget::event(e);

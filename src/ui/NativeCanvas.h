@@ -19,7 +19,7 @@
 namespace compositor {
 class NativeCanvas final:public QWidget {
 public:
-    struct ShapeDraftOverlay {editing::Rect rect;editing::ShapeKind kind;double cornerRadius;Pixel fill;};
+    struct ShapeDraftOverlay {editing::Rect rect;editing::ShapeKind kind;double cornerRadius;Pixel fill;std::optional<Point> start,end;double lineWidth{4};};
 private:
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> immediate_;
@@ -63,7 +63,8 @@ private:
     QString presentationDiagnostic_;
     uint64_t presentationBytes_{},profileDiscoveryCount_{};
     uint64_t presentationByteBudget_{128ULL*1024*1024};
-    bool warp_,dragging_{},rightDragging_{},tabletActive_{};
+    bool warp_,dragging_{},rightDragging_{},tabletActive_{},middlePanning_{};
+    QPointF middleLast_;
     double backingScale_{1};
     bool followsFit_{true};
     QPointF last_;
@@ -74,6 +75,11 @@ private:
     void releaseDevice();
     void draw(bool present=true);
     void drawSelection();
+    void drawLayout();
+    bool beginGuide(QPointF);
+    void updateGuide(QPointF,bool finish);
+    std::optional<CanvasGuide> draggedGuide_;
+    bool newGuide_{};
     void updateSelectionAnimation();
     graphics::CanvasViewport viewportState()const;
     void installViewport(const graphics::CanvasViewport&);
@@ -88,6 +94,11 @@ public:
     double zoom{1}; // Physical display pixels per document pixel.
     QPointF pan; // Logical view pixels (DIPs).
     bool showPixelGrid{};
+    bool showRulers{},showGuides{true},showLayoutGrid{},lockGuides{};
+    std::vector<CanvasGuide> guides;
+    std::function<bool()> canEditGuide;
+    std::function<void(CanvasGuide,bool)> guideCommitted;
+    std::function<double(double,CanvasGuide::Axis,const std::string&)> guideSnap;
     std::function<void(QPointF,Qt::KeyboardModifiers)> pointerDown,pointerMove,pointerUp;
     std::function<void(QPointF,Qt::KeyboardModifiers)> pointerDoubleClick;
     std::function<void()> pointerCancel;

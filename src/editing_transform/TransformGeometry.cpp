@@ -128,13 +128,14 @@ Transform Drag::updated(Point point,bool lockRatio,Modifiers flags) const{
         const auto d=subtract(add(outlinePoint(original,h),delta),anchor);const double r=radians(original),span=flags.option?2:1;
         const double localX=(d.x*std::cos(r)+d.y*std::sin(r))*span,localY=(-d.x*std::sin(r)+d.y*std::cos(r))*span;
         const double sx=h.x*2-1,sy=h.y*2-1;
-        double width=sx==0?original.width:std::max(1.,localX*sx),height=sy==0?original.height:std::max(1.,localY*sy);
+        const double rawWidth=sx==0?original.width:localX*sx,rawHeight=sy==0?original.height:localY*sy;
+        const bool mirroredX=rawWidth<0,mirroredY=rawHeight<0;double width=std::max(1.,std::abs(rawWidth)),height=std::max(1.,std::abs(rawHeight));
         if(lockRatio!=flags.shift){double factor;
             if(sx==0)factor=height/original.height;else if(sy==0)factor=width/original.width;
-            else factor=std::max(1/std::min(original.width,original.height),(localX*sx*original.width+localY*sy*original.height)/(original.width*original.width+original.height*original.height));
+            else factor=std::max(1/std::min(original.width,original.height),(std::abs(rawWidth)*original.width+std::abs(rawHeight)*original.height)/(original.width*original.width+original.height*original.height));
             width=original.width*factor;height=original.height*factor;
         }
-        out.width=width;out.height=height;const double ox=(.5-anchorUnit.x)*width,oy=(.5-anchorUnit.y)*height;
+        out.width=width;out.height=height;if(mirroredX)out.flipX=!out.flipX;if(mirroredY)out.flipY=!out.flipY;const double ox=(.5-anchorUnit.x)*width*(mirroredX?-1:1),oy=(.5-anchorUnit.y)*height*(mirroredY?-1:1);
         out.x=anchor.x+ox*std::cos(r)-oy*std::sin(r)-width/2;out.y=anchor.y+ox*std::sin(r)+oy*std::cos(r)-height/2;break;
     }}return checked(out,original);
 }
@@ -147,6 +148,10 @@ std::optional<Corners> Drag::movedCorners(Point point,bool shift) const{
     return out;
 }
 bool usableCorners(const Corners& c){
+    for(auto p:c)if(!finite(p)||std::abs(p.x)>1000000||std::abs(p.y)>1000000)return false;
+    auto area=[](Point a,Point b,Point d){return (b.x-a.x)*(d.y-a.y)-(b.y-a.y)*(d.x-a.x);};return std::abs(area(c[0],c[1],c[2]))>.01&&std::abs(area(c[0],c[2],c[3]))>.01;
+}
+bool convexCorners(const Corners& c){
     double sign=0;for(auto p:c)if(!finite(p)||std::abs(p.x)>1000000||std::abs(p.y)>1000000)return false;
     for(size_t i=0;i<4;++i){const auto a=c[i],b=c[(i+1)%4],d=c[(i+2)%4];const double cross=(b.x-a.x)*(d.y-b.y)-(b.y-a.y)*(d.x-b.x);
         if(std::abs(cross)<=.01)return false;if(sign==0)sign=cross<0?-1:1;else if((cross<0)!=(sign<0))return false;}

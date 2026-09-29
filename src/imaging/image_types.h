@@ -1,4 +1,5 @@
 #pragma once
+#include "core/DocumentLimits.h"
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -14,16 +15,17 @@ struct RgbaImage { std::uint32_t width{}, height{}; std::size_t stride{}; std::v
 struct GrayMask { std::uint32_t width{}, height{}; std::size_t stride{}; std::vector<std::uint8_t> pixels; };
 struct ImportOptions {
     std::uint32_t maxSide{30000};
-    std::uint64_t remainingPixels{100000000};
+    std::uint64_t remainingPixels{limits::surfacePixels};
     std::uint64_t maxWorkingBytes{1200000000};
     bool applyExifOrientation{true};
     // Must be thread-safe and non-throwing; native inference polls on a worker thread.
     std::function<bool()> cancelled;
+    std::uint64_t remainingMaskPixels{limits::surfacePixels};
 };
 inline void checkCancelled(const ImportOptions& o) { if(o.cancelled && o.cancelled()) throw std::runtime_error("Image operation cancelled"); }
 inline std::size_t checkedBytes(std::uint32_t w,std::uint32_t h,std::uint32_t channels,const ImportOptions& o={}) {
     const auto n=std::uint64_t(w)*h;
-    if(!channels || channels>4 || !w || !h || w>std::min(o.maxSide,30000U) || h>std::min(o.maxSide,30000U) || n>std::min(o.remainingPixels,100000000ULL) || n>std::numeric_limits<std::size_t>::max()/channels || n*channels>o.maxWorkingBytes)
+    if(!channels || channels>4 || !w || !h || w>std::min(o.maxSide,uint32_t(limits::maxSide)) || h>std::min(o.maxSide,uint32_t(limits::maxSide)) || n>std::min<uint64_t>(o.remainingPixels,limits::surfacePixels) || n>std::numeric_limits<std::size_t>::max()/channels || n*channels>o.maxWorkingBytes)
         throw std::runtime_error("Image exceeds dimensions, pixel, or allocation budget");
     return static_cast<std::size_t>(n*channels);
 }

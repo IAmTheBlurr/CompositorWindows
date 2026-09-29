@@ -82,6 +82,8 @@ public:
             gradient.setColorAt(0,color); gradient.setColorAt(1,transparent);
             p->setBrush(gradient); p->drawRoundedRect(QRectF(4,4,16,16),2,2); break;
         }
+        case EditorIcon::Type:
+            line(5,5,19,5);line(12,5,12,20);line(8,20,16,20);line(5,5,5,8);line(19,5,19,8);break;
         case EditorIcon::Shape:
             p->drawEllipse(QRectF(3,3,13,13)); p->setBrush(QApplication::palette().color(QPalette::Window));
             p->drawRoundedRect(QRectF(9,9,12,12),1.5,1.5); break;
